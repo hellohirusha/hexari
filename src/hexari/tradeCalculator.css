@@ -1,0 +1,136 @@
+.trade-calculator .trade-context {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.trade-context label {
+  display: grid;
+  gap: 0.35rem;
+}
+.trade-context input {
+  width: 100%;
+}
+.trade-goals {
+  border: 0;
+  padding: 0;
+  margin: 1rem 0;
+}
+.trade-goals > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.trade-goals label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border, #566675);
+  border-radius: 0.4rem;
+}
+.trade-zone {
+  border: 1px solid var(--border, #566675);
+  border-radius: 0.6rem;
+  padding: 0.85rem;
+  min-width: 0;
+}
+.trade-zone h3 {
+  margin: 0 0 0.4rem;
+}
+.trade-zone p {
+  margin: 0 0 0.6rem;
+  font-size: 0.85em;
+}
+.trade-offers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+.trade-resource-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: flex-start;
+  min-height: 3rem;
+}
+.trade-resource,
+.trade-offer-card {
+  width: 62px;
+  border: 1px solid #ffffff55;
+  border-radius: 0.4rem;
+  background: #738377;
+  color: #fff;
+  overflow: hidden;
+}
+.trade-resource-wood {
+  background: #4b6d55;
+}
+.trade-resource-brick {
+  background: #a66d55;
+}
+.trade-resource-wheat {
+  background: #a48d4f;
+}
+.trade-resource-ore {
+  background: #71818a;
+}
+.trade-resource-sheep {
+  background: #879b6c;
+}
+.trade-resource > button {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+  padding: 0.2rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 0.7rem;
+  text-transform: capitalize;
+  cursor: pointer;
+  touch-action: none;
+}
+.trade-resource svg,
+.trade-offer-card svg {
+  width: 36px;
+  height: 36px;
+}
+.trade-stepper {
+  display: flex;
+  justify-content: space-evenly;
+  background: #0003;
+}
+.trade-stepper button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: white;
+  cursor: pointer;
+}
+.trade-offer-card {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  height: 80px;
+  padding: 0.3rem;
+  text-transform: capitalize;
+  cursor: pointer;
+  touch-action: none;
+  font-size: 0.7rem;
+}
+.trade-offer-card span {
+  white-space: nowrap;
+  font-size: 0.6rem;
+}
+.trade-empty {
+  opacity: 0.75;
+  align-self: center;
+}
+.trade-bank {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.8rem 0;
+}
