@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/forge", "destination": "/" },
+    { "source": "/tools", "destination": "/" }
+  ]
+}
