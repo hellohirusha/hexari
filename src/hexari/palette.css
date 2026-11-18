@@ -1,0 +1,251 @@
+.board-palette .terrain-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.board-palette .palette-terrain-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 66px;
+  width: 66px;
+  min-width: 0;
+  height: 82px;
+  min-height: 82px;
+  padding: 7px 3px;
+  border: 1px solid #e3dfb980;
+  border-radius: 7px;
+  color: #fff9eb;
+  font-weight: 700;
+  font-size: 0.65rem;
+  text-align: center;
+  text-shadow: 0 1px 2px #11231ecc;
+  box-shadow:
+    inset 0 2px #ffffff40,
+    inset 0 -4px #10231e4d,
+    0 3px 5px #06191c40;
+}
+.board-palette .terrain-wood {
+  background: linear-gradient(155deg, #799e71, #355b49);
+}
+.board-palette .terrain-brick {
+  background: linear-gradient(155deg, #d9916b, #75483c);
+}
+.board-palette .terrain-wheat {
+  background: linear-gradient(155deg, #e4c36e, #876f3e);
+}
+.board-palette .terrain-ore {
+  background: linear-gradient(155deg, #a2b5b8, #596971);
+}
+.board-palette .terrain-sheep {
+  background: linear-gradient(155deg, #bed28c, #718959);
+}
+.board-palette .terrain-desert {
+  background: linear-gradient(155deg, #e0cd9d, #8c805e);
+}
+.board-palette .palette-terrain-card > .palette-terrain-icon {
+  display: block;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  background: transparent;
+}
+.board-palette .palette-terrain-card:hover {
+  filter: brightness(1.1);
+}
+.board-palette .palette-piece:focus-visible,
+.board-palette .palette-clear:focus-visible {
+  outline: 3px solid var(--map-accent);
+  outline-offset: 3px;
+}
+.board-palette .palette-piece.active {
+  outline: 3px solid var(--map-accent);
+  outline-offset: 2px;
+}
+.board-palette .palette-number-cards {
+  align-items: stretch;
+  gap: 7px;
+}
+.board-palette .palette-number-cards .number-piece {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 3px;
+  min-width: 44px;
+  min-height: 54px;
+  padding: 4px;
+  background: var(--map-control);
+  box-shadow:
+    inset 0 1px #ffffff26,
+    0 2px 3px #06191c33;
+}
+.palette-number-face {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #f3e7c9;
+  color: #30413b;
+  box-shadow:
+    inset 0 1px #fff9e8,
+    0 2px #816f50;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+.palette-number-face.high-probability {
+  color: #a84232;
+}
+.palette-pips {
+  color: var(--map-ink);
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  line-height: 0.6;
+}
+.board-palette .palette-clear {
+  align-self: center;
+  min-height: 44px;
+}
+.board-palette .palette-terrain-card {
+  white-space: normal;
+}
+.port-editor {
+  border: 0;
+  padding: 0;
+  margin: 18px 0;
+}
+.port-editor legend {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.port-editor-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.seat-balance {
+  margin: 18px 16px 20px;
+  padding: 16px;
+  border: 1px solid var(--map-line);
+  border-radius: 8px;
+  background: var(--map-board);
+}
+.board-panel {
+  align-self: start;
+}
+.shell .board-wrap .board-canvas-stack {
+  transform: translateY(-12px);
+}
+.shell .content {
+  padding-bottom: 12px;
+}
+.shell .content > footer {
+  margin-top: 10px;
+}
+.seat-balance-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+}
+.seat-balance-heading span {
+  color: var(--map-soft);
+  font-size: 0.65rem;
+}
+.seat-balance-scores {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.seat-balance-scores > div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--map-line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--map-panel);
+}
+.seat-balance-scores span {
+  color: var(--map-soft);
+  font-size: 0.65rem;
+}
+.seat-balance-scores strong {
+  color: var(--map-ink);
+  font-size: 0.9rem;
+  line-height: 1.2;
+}
+@media (max-width: 480px) {
+  .shell .board-palette .terrain-items {
+    display: grid;
+    grid-template-columns: repeat(3, 66px);
+    justify-content: start;
+  }
+  .shell .board-wrap .board-top {
+    padding-bottom: 12px;
+  }
+  .seat-balance-scores {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.port-editor-options button[aria-pressed="true"] {
+  border-color: var(--map-accent);
+  background: var(--map-accent);
+  color: var(--map-accent-ink);
+}
+.compare-caption {
+  color: var(--map-soft);
+  font-size: 0.75rem;
+}
+.compare-table-wrap {
+  overflow-x: auto;
+}
+.compare-scroll-hint {
+  display: none;
+}
+.compare-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--map-panel);
+}
+.compare-table thead th:first-child {
+  z-index: 2;
+}
+@media (max-width: 600px) {
+  .compare-scroll-hint {
+    display: block;
+    color: var(--map-soft);
+    font-size: 0.75rem;
+  }
+}
+.compare-table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 440px;
+  font-size: 0.75rem;
+}
+.compare-table th,
+.compare-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--map-line);
+  text-align: left;
+}
+.compare-table th {
+  color: var(--map-soft);
+  font-weight: 600;
+}
+.compare-table thead th {
+  color: var(--map-ink);
+}
+.compare-table thead button {
+  margin-left: 8px;
+  font-size: 1rem;
+}
+.compare-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
