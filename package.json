@@ -1,0 +1,37 @@
+{
+  "name": "hexari",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:forge": "vite --config vite.forge.config.ts",
+    "build": "tsc --noEmit && vite build",
+    "build:forge": "tsc --noEmit && vite build --config vite.forge.config.ts",
+    "preview:forge": "vite preview --config vite.forge.config.ts",
+    "test": "vitest run",
+    "lint": "eslint . && tsc --noEmit",
+    "format": "prettier --check ."
+  },
+  "dependencies": {
+    "pixi.js": "^8.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.3.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^6.0.0",
+    "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
+  }
+}
