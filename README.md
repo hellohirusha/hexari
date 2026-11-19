@@ -1,171 +1,335 @@
 # Hexari
 
-Hexari is a browser-based strategy companion for Catan and Colonist players. It helps players examine a board, compare settlement positions, record a game, and evaluate trades. It also includes Forge, a two-player speed variant built around a fixed starting board and a five-point target.
+> A browser-based strategy companion for analyzing hex boards and improving
+> play, with Forge, a fast two-player strategy game.
+> Built with React, TypeScript, Vite, PixiJS, and Node.js.
 
-The tools are intended for players learning the relationship between placement, production, resources, and trades, as well as experienced players who want to explore a position. Hexari uses probability calculations and simplified models to make those decisions easier to inspect. Its recommendations are aids to judgment, not predictions of a game's outcome.
+## How it works
 
-The combined application is available at [hexari.hirusha.space](https://hexari.hirusha.space/). The repository also supports running Forge as a separate application.
+Hexari brings board analysis, game tracking, trading, and coaching together
+around one shared board configuration. Forge is a separate game with its own
+fixed board and simplified rules.
 
-## Features
+| Surface                | Route    | What you can do                                                                              |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| **Board analyzer**     | `/`      | Configure tiles, number tokens, and ports; rank and compare starting intersections           |
+| **Strategy workspace** | `/tools` | Track a session, evaluate trades, request coaching, and explore board statistics             |
+| **Forge**              | `/forge` | Play a two-player game against a bot, on one device, or online with a configured game server |
 
-### Board analyzer
+The Hexari workflow:
 
-Build a 19-tile board, set terrain, number tokens, and ports, and inspect production across its 54 intersections. The analyzer displays a pip heat map and ranked positions, supports three strategy modes, compares up to three corners, and filters positions using the settlement distance rule. Boards can be shared through a URL hash. A bounded auto-balance search evaluates candidate boards using a simulated four-player opening draft.
+```text
+                      +--> Analyze and compare settlement positions
+                      |
+Configure one board --+--> Track games and evaluate trades
+                      |
+                      +--> Ask the coach and explore statistics
+                      |
+                      +--> Share the board through its URL hash
+```
 
-### Strategy workspace
+The analyzer scores 54 intersections on a standard 19-tile board using
+production, resource diversity, ports, and the selected strategy. It can filter
+second placements using the distance rule and compare up to three corners. The
+board balancer evaluates candidate boards with a simulated opening draft.
 
-- **Session tracker:** Record rolls, players' starting positions, buildings, trades, and steals. Compare observed and expected roll distributions and estimate hands from recorded events.
-- **Trade calculator:** Enter a hand, placements, and a build goal to compare an offer using resource availability and applicable bank or port rates.
-- **AI coach:** Submit a structured game state and a strategic question. Advice is streamed from a server-side model provider. Recent Hexari coaching responses are stored locally per board.
-- **Statistics:** Explore board production, opening opportunities, a simulated strategy race, and common mistakes with hypothetical board examples.
+In Forge, each player begins with a settlement and one of each resource on a
+fixed 37-tile board. Roll, collect, trade, and build towards **five victory
+points**. Turns have a two-minute timer; the hand limit is seven cards. Forge
+has no robber, and building ends the turn. Farms and markets add rules specific
+to this variant.
 
-### Forge
+## Status
 
-Forge is a streamlined two-player game playable against a bot, locally in hot-seat mode, or through an invite-based online session when the multiplayer service is configured. Players start with predetermined settlements, collect resources from dice rolls, and build towards five victory points. The variant has a two-minute turn timer, a seven-card hand cap, no robber, and no initial placement phase. Roads, settlements, cities, farms, markets, bank exchanges, and one-card player trades are supported. A successful build ends the turn.
+| Goal                                   | Status                                                       |
+| -------------------------------------- | ------------------------------------------------------------ |
+| Board editor, sharing, and rankings    | Implemented                                                  |
+| Opening comparison and board balancing | Implemented with heuristic scoring and simulated drafts      |
+| Session tracker and trade calculator   | Implemented                                                  |
+| Statistics and strategy simulation     | Implemented with simplified models                           |
+| AI coach in Hexari and Forge           | Implemented; requires a working function and provider key    |
+| Forge against a bot or on one device   | Implemented with local save and resume                       |
+| Invite-based online Forge              | Implemented; requires a separately hosted WebSocket service  |
+| Automated checks and deployment        | CI and Vercel workflows configured; deployment needs secrets |
+| Multiplayer validation                 | Test each deployment across devices                          |
 
-Local games can be saved and resumed in the browser. Forge also provides an in-game coach, an activity log, and optional sound. The online service is a separate, in-memory WebSocket process; see [Online multiplayer](#online-multiplayer).
+**Production application**
 
-## Technology
-
-| Area            | Technology                                                                 |
-| --------------- | -------------------------------------------------------------------------- |
-| Application     | React 18, TypeScript, Vite                                                 |
-| Board rendering | PixiJS 8 with SVG interaction layers and fallbacks                         |
-| Coaching        | Vercel Node.js function, Gemini API, optional Groq API, server-sent events |
-| Multiplayer     | Node.js, WebSockets (`ws`)                                                 |
-| Verification    | Vitest, ESLint, Prettier, GitHub Actions                                   |
-| Persistence     | Browser local storage; in-memory rooms for online Forge                    |
+- Hexari: [hexari.hirusha.space](https://hexari.hirusha.space/)
+- Forge: [hexari.hirusha.space/forge](https://hexari.hirusha.space/forge)
 
 ## Architecture
 
 ```text
-Browser
-  React screens (Hexari / Forge)
-    |-- Shared board geometry, resources and rendering
-    |-- Hexari analysis, tracker and trade engines
-    |-- Forge game engine and bot
-    |-- POST /api/coach ------> Node function ------> Gemini / Groq
-    `-- WebSocket /forge -----> Multiplayer service (online Forge)
+Browser (React + TypeScript)
+|
++-- Hexari
+|   |
+|   +-- Analyzer and strategy workspace
+|   +-- Shared board, resources, and strategy engines
+|
++-- Forge UI, game engine, and bot
+|
++-- POST /api/coach --> Node function --> Gemini / Groq
+|
++-- WebSocket /forge --> Multiplayer service --> In-memory rooms
 ```
 
-The Hexari analyzer and workspace share a board configuration. Forge uses game-specific board data and a TypeScript engine for state transitions and rules. The React interface invokes the engines and renders their results. The coach endpoint validates a structured state, sends it to a configured provider, and streams the response to the browser. Provider keys remain on the server.
+Hexari stores its board configuration in the browser and reuses it across the
+analyzer and workspace. Forge uses its own board and game state. The coach
+validates the submitted state, calls a server-side model provider, and streams
+advice back to the browser. Provider keys stay on the server.
 
-For online Forge, the WebSocket service owns the session state, applies player commands, and sends each player a view with the opponent's hand hidden. Rooms exist only in the running process; they are not stored in a database.
+The online service owns the game state, validates player commands, and hides
+the opponent's hand in each player's view. Rooms live in server memory, expire
+after two hours, and close when a player disconnects. A server restart removes
+active rooms.
+
+## Stack
+
+| Layer           | Technology                  | Notes                                                  |
+| --------------- | --------------------------- | ------------------------------------------------------ |
+| Frontend        | React 18, TypeScript, Vite  | Combined Hexari app and standalone Forge entry point   |
+| Board rendering | PixiJS 8 and SVG            | Terrain rendering with accessible interaction controls |
+| Strategy        | TypeScript                  | Board scoring, tracking, trades, and simulations       |
+| AI coach        | Vercel Node function        | Gemini, optional Groq backup, server-sent events       |
+| Multiplayer     | Node.js and `ws`            | Separate WebSocket process for online Forge            |
+| Persistence     | Browser local storage       | Boards, local sessions, settings, and coach history    |
+| Testing         | Vitest and Node test runner | Unit, integration, and two-client multiplayer tests    |
+| Quality and CI  | ESLint, Prettier, Actions   | Lint, format, tests, and both application builds       |
+
+## Project structure
 
 ```text
-api/coach.ts              Coach HTTP function
-apps/forge/               Standalone Forge entry point
-server/multiplayer.mjs    Online Forge WebSocket service
-src/forge/                Forge UI, engine, bot and online session logic
-src/hexari/               Analyzer, workspace and strategy engines
-src/server/               Coach streaming and local development middleware
-src/shared/               Board geometry, rendering, resources and shared UI
-tests/                    Engine, component and integration tests
+hexari/
+|-- api/coach.ts              Coach HTTP function
+|-- apps/forge/               Standalone Forge HTML and entry point
+|-- server/multiplayer.mjs    Online Forge WebSocket service
+|-- src/
+|   |-- forge/                Game UI, rules, bot, online session, and assets
+|   |-- hexari/               Analyzer, workspace, and strategy engines
+|   |-- server/               Coach streaming and local Vite middleware
+|   +-- shared/               Board model, rendering, resources, and shared UI
+|-- tests/                    Unit, integration, and multiplayer tests
+|-- .github/workflows/        CI and Vercel deployment workflows
+|-- vite.config.ts            Combined application configuration
+|-- vite.forge.config.ts      Standalone Forge configuration
++-- vercel.json               Vercel routes and Git deployment settings
 ```
 
-## Getting started
+## Prerequisites
 
-### Prerequisites
+- Node.js 22.12 or later in the Node 22 release line, Node 24, or Node 26+,
+  with npm. CI runs on Node 22 and 26. The multiplayer service uses Node's
+  TypeScript type stripping.
+- A modern browser. No database is needed for local play.
+- A Gemini or Groq API key only if you want AI coaching.
+- A running WebSocket service only if you want online Forge.
 
-- Node.js 22.12 or later in the Node 22 release line, and npm. The CI workflow uses Node.js 22; the multiplayer script uses Node's TypeScript type stripping.
-- A modern browser.
-- A Gemini or Groq API key only if you want to use AI coaching. The other features can run without a key.
+## Quick start (Windows / PowerShell)
 
-### Install and run
-
-```sh
+```powershell
 git clone https://github.com/hellohirusha/hexari.git
 cd hexari
 npm ci
+
+# Optional: configure a provider for AI coaching
+Copy-Item .env.example .env.local
+# Add GEMINI_API_KEY or GROQ_API_KEY to .env.local.
+
+# Start the combined application
 npm run dev
 ```
 
-Open the URL printed by Vite. The combined application provides:
+Open the URL printed by Vite. The analyzer is at `/`, the workspace at
+`/tools`, and Forge at `/forge`. On macOS or Linux, replace `Copy-Item` with
+`cp`. Restart the development server after changing environment variables.
 
-| Route    | Page               |
-| -------- | ------------------ |
-| `/`      | Board analyzer     |
-| `/tools` | Strategy workspace |
-| `/forge` | Forge              |
+To run Forge on its own, use `npm run dev:forge` and open the printed URL.
+The standalone development app serves Forge at `/`.
 
-To run the standalone Forge application, use `npm run dev:forge` and open its printed URL. Forge is served at `/` in this configuration.
+### Walk through the product
 
-### Configure AI coaching
+1. Open the analyzer and configure the terrain, number tokens, and ports to
+   match a board.
+2. Choose a strategy, select an intersection, and use **Compare** to inspect
+   up to three starting positions. The URL hash carries the board configuration.
+3. Open `/tools` to record a session, compare a trade, or review the statistics
+   for that board. The tracker depends on the events you enter.
+4. With a provider configured, enter the visible position and request advice in
+   the workspace. Forge also has a coach for its current game state.
+5. Open `/forge`, select **Start game**, then choose a bot or local two-player
+   game. Roll before trading or building, and race to five points.
 
-Copy `.env.example` to `.env.local` in the repository root, then add at least one provider key:
+### Play Forge online locally
 
-```dotenv
-GEMINI_API_KEY=your_gemini_key
-# Optional model override:
-# GEMINI_MODEL=your_gemini_model
+Run these commands in separate terminals from the repository root:
 
-# Optional, or use Groq as the sole provider:
-GROQ_API_KEY=your_groq_key
-# GROQ_MODEL=your_groq_model
-```
-
-Both development servers load this file and serve `/api/coach` through local middleware. Restart the server after changing environment variables. `.env.local` is ignored by Git; do not put provider keys in client code or variables prefixed with `VITE_`.
-
-Gemini is used when its key is present. If Gemini returns a rate limit or server error and a Groq key is configured, the endpoint tries Groq. With only a Groq key, it uses Groq directly. The defaults in the code are `gemini-3.8-flash` and `llama-3.3-70b-versatile`; model access and availability depend on the provider and account, so set an override if needed. Keys configured in Vercel are not automatically available to a local development server.
-
-### Online multiplayer
-
-Start the application and the multiplayer service in separate terminals:
-
-```sh
+```powershell
+# Terminal 1: browser app
 npm run dev
+
+# Terminal 2: multiplayer service
 npm run multiplayer
 ```
 
-Open Forge, select **Online 1 vs. 1**, create a game, and share its invite link with the second player. On `localhost` and `127.0.0.1`, the client defaults to `ws://localhost:8787/forge`. The service exposes `GET /health` and listens on port `8787` unless `PORT` is set.
+Open Forge, select **Online 1 vs. 1**, create a game, and open the invite in a
+second browser window. By default, the client on `localhost` or `127.0.0.1`
+connects to `ws://localhost:8787/forge`. These localhost links work on the
+same computer. For different devices, configure a reachable app URL and
+WebSocket endpoint for both players.
 
-Localhost invites work for two browser windows on the same computer. For different devices, both players need an application URL and WebSocket service address reachable from their devices; configure the remote service as described below.
+## Environment variables
 
-For a different browser origin or a remote service, configure:
+### Coach server (`.env.local` or deployment environment)
 
-| Variable                | Used by             | Purpose                                 |
-| ----------------------- | ------------------- | --------------------------------------- |
-| `VITE_FORGE_SERVER_URL` | Vite client         | Full WebSocket URL, including `/forge`  |
-| `PORT`                  | Multiplayer process | Listening port                          |
-| `FORGE_ALLOWED_ORIGINS` | Multiplayer process | Comma-separated allowed browser origins |
+| Variable         | Required       | Purpose                                                |
+| ---------------- | -------------- | ------------------------------------------------------ |
+| `GEMINI_API_KEY` | One key needed | Gemini credential; preferred when present              |
+| `GEMINI_MODEL`   | No             | Gemini model override; default `gemini-3.8-flash`      |
+| `GROQ_API_KEY`   | One key needed | Groq credential; can be the sole provider or a backup  |
+| `GROQ_MODEL`     | No             | Groq model override; default `llama-3.3-70b-versatile` |
 
-The default allowed origins are `http://localhost:5173` and `http://127.0.0.1:5173`. Add the actual application origin if Vite chooses another port or the client is hosted elsewhere. Use a secure `wss://` endpoint for an HTTPS-hosted client. Configure the service separately from the static application and Vercel coach function.
+`.env.example` lists the provider key fields. Either provider key is enough;
+the model variables are optional. The local Vite middleware reads these values
+on startup. For Vercel, set server-side environment variables in the relevant
+project environment and redeploy after changing them. Do not put provider keys
+in client code or variables prefixed with `VITE_`.
 
-Rooms are held in memory, expire after two hours, and close when either player disconnects. Server restarts discard active sessions. The online implementation should be tested in its target deployment and across two devices before relying on it.
+### Online Forge
 
-## Commands
+| Variable                | Used by             | Purpose                                            |
+| ----------------------- | ------------------- | -------------------------------------------------- |
+| `VITE_FORGE_SERVER_URL` | Vite client         | Full WebSocket address, including `/forge`         |
+| `PORT`                  | Multiplayer process | HTTP and WebSocket port; default `8787`            |
+| `FORGE_ALLOWED_ORIGINS` | Multiplayer process | Comma-separated browser origins allowed to connect |
 
-| Command                    | Purpose                                                  |
-| -------------------------- | -------------------------------------------------------- |
-| `npm run dev`              | Run the combined app and local coach endpoint            |
-| `npm run dev:forge`        | Run standalone Forge and the local coach endpoint        |
-| `npm run multiplayer`      | Start the online Forge WebSocket service                 |
-| `npm run test:multiplayer` | Run the two-client WebSocket integration test            |
-| `npm test`                 | Run the Vitest suite                                     |
-| `npm run lint`             | Run ESLint and TypeScript checks                         |
-| `npm run format`           | Check formatting with Prettier                           |
-| `npm run build`            | Type-check and build the combined app into `dist/`       |
-| `npm run build:forge`      | Type-check and build standalone Forge into `dist-forge/` |
-| `npm run preview:forge`    | Preview the standalone static build                      |
+The service defaults to allowing `http://localhost:5173` and
+`http://127.0.0.1:5173`. Add the actual browser origin when the app runs on a
+different port or domain. Set `VITE_FORGE_SERVER_URL` before starting Vite or
+building the client. An HTTPS-hosted app needs a reachable secure `wss://`
+endpoint.
 
-`preview:forge` serves static files only; it does not provide the coach endpoint. The GitHub Actions workflow runs lint, formatting, tests, and both builds on pushes and pull requests.
+## API overview
+
+| Endpoint          | Service                | Purpose                                                             |
+| ----------------- | ---------------------- | ------------------------------------------------------------------- |
+| `POST /api/coach` | Vercel function / Vite | Validate game state and return model advice, optionally as a stream |
+| `GET /health`     | Multiplayer service    | Return `ok` when the process is running                             |
+| `WS /forge`       | Multiplayer service    | Create or join a room and exchange game commands and state          |
+
+Coach requests contain the board, question, turn, points, hand, buildings,
+and visible opponent information. The endpoint validates the payload and
+rejects cross-site browser requests. The current implementation requests at
+most five advice points of up to 12 words each and filters oversized points.
+It does not provide a global usage or spending cap.
+
+The multiplayer `/health` and `/forge` endpoints belong to the separate Node
+process, usually on port `8787`; they are not part of the Vercel coach function.
+
+## Documentation
+
+- [Board model](src/shared/board.ts) - terrain, geometry, ports, and scoring.
+- [Hexari strategy engines](src/hexari/engine/) - analysis, session tracking,
+  trade evaluation, and simulations.
+- [Forge rules and game state](src/forge/engine.ts) - game transitions, costs,
+  building legality, and scoring.
+- [Coach function](api/coach.ts) and [streaming implementation](src/server/coachStream.ts).
+- [Multiplayer service](server/multiplayer.mjs) and
+  [online session rules](src/forge/online/session.ts).
+- [Audio credits](src/forge/assets/audio/CREDITS.md).
+
+## Testing
+
+```powershell
+npm run lint
+npm run format
+npm test
+npm run test:multiplayer
+npm run build
+npm run build:forge
+```
+
+| Command                    | What it checks                                                     |
+| -------------------------- | ------------------------------------------------------------------ |
+| `npm run lint`             | ESLint and TypeScript                                              |
+| `npm run format`           | Prettier formatting                                                |
+| `npm test`                 | Vitest unit and integration suites                                 |
+| `npm run test:multiplayer` | Two WebSocket clients joining, playing, trading, and disconnecting |
+| `npm run build`            | Type-check and build the combined application into `dist/`         |
+| `npm run build:forge`      | Type-check and build standalone Forge into `dist-forge/`           |
+
+CI runs these checks on pushes and pull requests using Node 22 and 26. Coach
+integration tests use simulated provider responses; they do not prove a live
+provider key, model, or deployment is working. The multiplayer test exercises
+two clients against a local service; it is not a cross-device browser test.
+
+### End-to-end checks
+
+For a manual check, configure a provider, run the app, and request advice in
+Forge. Start the multiplayer service and join an invite from a second browser
+window. Repeat online testing with two devices and the actual hosted service
+before relying on a deployment. Use playtests to assess Forge's balance and
+game duration.
 
 ## Deployment
 
-The combined Vercel configuration builds the Vite app and rewrites `/tools` and `/forge` to its entry point. `api/coach.ts` is the server-side coach function. Configure provider keys as server environment variables for the relevant Vercel environment and create a new deployment after changing them.
+### Combined app and coach on Vercel
 
-For a separate Forge deployment, use the repository root as the project root, `npm run build:forge` as the build command, and `dist-forge` as the output directory. The repository-root `api/coach.ts` must be available to the deployment for coaching. This standalone deployment configuration has not been verified here.
+The combined application builds with `npm run build` into `dist/`. Vercel uses
+the repository-root `api/coach.ts` function; `vercel.json` rewrites `/tools`
+and `/forge` to the app entry point. Configure at least one provider key for
+the target Vercel environment and redeploy after changing it.
 
-Before exposing the coach publicly, configure and test endpoint rate limiting and provider usage or spending controls. The function validates its input and limits output, but does not provide a global spending cap. The WebSocket multiplayer service requires its own suitable host, origin configuration, and operational controls.
+The [deployment workflow](.github/workflows/cd.yml) runs after successful CI on
+the repository's default branch. It pulls production settings, builds with the
+Vercel CLI, and deploys the verified commit if the branch has not moved. It
+requires `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and `VERCEL_TOKEN` as GitHub
+Actions secrets. Check the workflow and Vercel project settings for the current
+deployment state.
 
-## Data and model limitations
+### Online multiplayer
 
-Board configurations, local games, settings, tracker data, and Hexari coaching history are stored in browser local storage. They are specific to the browser and origin and can be lost when browser data is cleared. Online rooms are transient. Coaching sends the submitted game state to the configured model provider; Forge includes the current player's hand and visible board information.
+Host `server/multiplayer.mjs` as a separate long-running Node process that
+supports WebSockets. Set its allowed browser origins and expose a secure
+endpoint. Build the browser app with `VITE_FORGE_SERVER_URL` pointing to that
+endpoint. Vercel's static app and coach function do not start this service.
 
-Placement scores, trade evaluations, balance results, and player-hand estimates are heuristics. The tracker relies on entered events and assumptions, including uniformly random unknown steals; it cannot infer unrecorded actions. Dice rolls are independent, so a number that has appeared less often is not more likely on the next roll.
+### Standalone Forge
 
-The statistics race simulates fixed strategies under simplified rules and does not represent observed player win rates. The board balancer's simulated draft does not guarantee fairness. Forge differs from a full Catan ruleset, and game duration and balance require human playtesting.
+Use the repository root as the project root, `npm run build:forge` as the
+build command, and `dist-forge` as the output directory. The repository-root
+coach function must also be included if coaching is needed. Verify that the
+standalone deployment includes the function before relying on coaching.
 
-## License and credits
+### Post-deploy smoke test
 
-The project is licensed under the [MIT License](LICENSE). Audio attribution is listed in [audio credits](src/forge/assets/audio/CREDITS.md).
+1. Open `/`, `/tools`, and `/forge` directly and confirm each page loads.
+2. Request coach advice and check the Vercel function logs if it fails. A GET
+   request to `/api/coach` should receive a `405` JSON response when the
+   function is running; an actual coaching request uses POST.
+3. If multiplayer is configured, check the separate service's `/health`, then
+   create and join a game from two devices using the deployed URLs.
+
+## Development notes
+
+- `npm run preview:forge` previews static files and does not provide the local
+  coach middleware. Use `npm run dev` or `npm run dev:forge` to test the coach
+  locally.
+- Board configurations, local games, settings, tracker events, and Hexari
+  coaching history are stored in browser local storage. They are specific to
+  the browser and origin and can be lost when that storage is cleared.
+- Coaching sends the submitted game state to the configured AI provider. Forge
+  sends the current player's hand and visible board information.
+- Placement scores, trade evaluations, hand estimates, board balancing, and
+  strategy races are heuristics or simulations. They are not observed win
+  rates or guarantees of fairness. Dice rolls are independent: past results do
+  not change the next roll's probability.
+- Configure and test rate limiting and provider usage or spending controls
+  before exposing a public coach endpoint. Protect and operate the multiplayer
+  service separately.
+
+## License
+
+Hexari is licensed under the [MIT License](LICENSE). See the
+[audio credits](src/forge/assets/audio/CREDITS.md) for sound attribution.
