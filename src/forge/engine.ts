@@ -1,6 +1,11 @@
-import { defaultBoard, vertices } from "./board";
-import { goods, type Goods, type Hand } from "../shared/resources";
-export { emptyHand, goods, type Goods, type Hand } from "../shared/resources";
+import { defaultBoard, vertices } from "./board.ts";
+import { goods, type Goods, type Hand } from "../shared/resources.ts";
+export {
+  emptyHand,
+  goods,
+  type Goods,
+  type Hand,
+} from "../shared/resources.ts";
 
 export type Player = {
   hand: Hand;
