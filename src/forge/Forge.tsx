@@ -19,6 +19,9 @@ import Die from "./Die";
 import ForgeMarket from "./ForgeMarket";
 import ForgeConfirm from "./ForgeConfirm";
 import ForgeModeDialog from "./ForgeModeDialog";
+import ForgeOnlineLobby, { type OnlineConnection } from "./ForgeOnlineLobby";
+import ForgeOnlineTrade from "./ForgeOnlineTrade";
+import type { OnlineCommand, OnlineSession, Seat } from "./online/session";
 import { FONT_SIZE_KEY, readFontSize } from "./fontSize";
 import ForgeSettings from "./ForgeSettings";
 import ForgePause from "./ForgePause";
@@ -101,7 +104,7 @@ export default function Forge({
       }
     }),
     [pixiReady, setPixiReady] = useState(false),
-    [opponent, setOpponent] = useState<"bot" | "hotseat">(() => {
+    [opponent, setOpponent] = useState<"bot" | "hotseat" | "online">(() => {
       const savedMode = localStorage.getItem("hexari-forge-mode");
       return savedMode === "hotseat" ||
         (!savedMode && localStorage.getItem(key))
@@ -157,6 +160,41 @@ export default function Forge({
         ),
       ),
     );
+  const [onlineLobby, setOnlineLobby] = useState(() =>
+    new URLSearchParams(window.location.hash.slice(1)).has("forge-room"),
+  );
+  const [online, setOnline] = useState<{
+    seat: Seat;
+    session: OnlineSession;
+    connected: boolean;
+    pending: boolean;
+  } | null>(null);
+  const onlineSocket = useRef<WebSocket | null>(null);
+  const onlineRef = useRef(online);
+  useEffect(() => {
+    onlineRef.current = online;
+  }, [online]);
+  useEffect(() => () => onlineSocket.current?.close(), []);
+  function onlineCommand(command: OnlineCommand) {
+    const current = onlineRef.current;
+    if (
+      !current ||
+      !current.connected ||
+      current.pending ||
+      !onlineSocket.current ||
+      onlineSocket.current.readyState !== WebSocket.OPEN
+    )
+      return;
+    onlineRef.current = { ...current, pending: true };
+    setOnline(onlineRef.current);
+    onlineSocket.current.send(
+      JSON.stringify({
+        type: "command",
+        revision: current.session.revision,
+        command,
+      }),
+    );
+  }
   const gameRef = useRef(game);
   const diceDisplayRef = useRef<HTMLSpanElement>(null);
   const boardSvgRef = useRef<SVGSVGElement>(null);
@@ -217,6 +255,79 @@ export default function Forge({
   const keyHandler = useRef<(event: KeyboardEvent) => void>(() => {});
   const pauseHandler = useRef<() => void>(() => {});
   const pauseActive = useRef(false);
+  function enterOnline(connection: OnlineConnection) {
+    const { socket, seat, session } = connection;
+    onlineSocket.current = socket;
+    const current = { seat, session, connected: true, pending: false };
+    onlineRef.current = current;
+    setOnline(current);
+    setOpponent("online");
+    setGame(session.game);
+    setResultDismissed(false);
+    setDiceFaces(null);
+    setTarget(null);
+    setBuildSelection(null);
+    setActivity([]);
+    setMessage("");
+    gameRef.current = session.game;
+    setStarted(true);
+    setOnlineLobby(false);
+    setModeDialogOpen(false);
+    welcomeMusicRef.current?.stop();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.search,
+    );
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(String(event.data));
+        if (data.type === "state") {
+          const previous = onlineRef.current;
+          if (!previous) return;
+          const updated = {
+            ...previous,
+            session: data.session as OnlineSession,
+            pending: false,
+          };
+          onlineRef.current = updated;
+          setOnline(updated);
+          gameRef.current = updated.session.game;
+          setGame(updated.session.game);
+          setClock(Date.now());
+          setTarget(null);
+          if (Array.isArray(data.dice) && data.dice.length === 2) {
+            setDiceFaces([data.dice[0], data.dice[1]]);
+            setDiceAnimation((n) => n + 1);
+          }
+        } else if (data.type === "error") {
+          setMessage(String(data.reason));
+          setOnline((previous) =>
+            previous ? { ...previous, pending: false } : null,
+          );
+          if (onlineRef.current)
+            onlineRef.current = { ...onlineRef.current, pending: false };
+        } else if (data.type === "closed") setMessage(String(data.reason));
+      } catch {
+        setMessage("The multiplayer server sent an invalid response.");
+      }
+    };
+    socket.onclose = () => {
+      setMessage(
+        "The multiplayer connection closed. Return to the start screen to play again.",
+      );
+      setOnline((previous) =>
+        previous ? { ...previous, connected: false, pending: false } : null,
+      );
+      if (onlineRef.current)
+        onlineRef.current = {
+          ...onlineRef.current,
+          connected: false,
+          pending: false,
+        };
+    };
+    socket.onerror = () => setMessage("The multiplayer connection failed.");
+  }
   useEffect(() => {
     document.documentElement.dataset.theme = initialTheme(
       "forge-theme",
@@ -228,10 +339,12 @@ export default function Forge({
     gameRef.current = game;
   }, [game]);
   useEffect(() => {
-    if (started) localStorage.setItem(key, JSON.stringify(game));
-  }, [game, started]);
+    if (started && opponent !== "online")
+      localStorage.setItem(key, JSON.stringify(game));
+  }, [game, started, opponent]);
   useEffect(() => {
-    localStorage.setItem("hexari-forge-mode", opponent);
+    if (opponent !== "online")
+      localStorage.setItem("hexari-forge-mode", opponent);
   }, [opponent]);
   useEffect(() => {
     localStorage.setItem("hexari-sound", sound ? "on" : "off");
@@ -290,8 +403,18 @@ export default function Forge({
     setChat([]);
     setMessage("");
   }
-  const botTurn = opponent === "bot" && game.turn === 1 && game.phase !== "end";
-  const handPlayer = opponent === "bot" ? 0 : game.turn;
+  const isBotTurn =
+    opponent === "bot" && game.turn === 1 && game.phase !== "end";
+  const botTurn =
+    isBotTurn ||
+    (opponent === "online" &&
+      (!online?.connected || online.pending || online.seat !== game.turn));
+  const handPlayer =
+    opponent === "online"
+      ? (online?.seat ?? 0)
+      : opponent === "bot"
+        ? 0
+        : game.turn;
   const buildAvailability = useMemo(
     () =>
       buildKinds.map((building) => ({
@@ -308,7 +431,7 @@ export default function Forge({
       ? buildSelection.building
       : null;
   useEffect(() => {
-    if (!started || !botTurn || pausedAt !== null) return;
+    if (!started || !isBotTurn || pausedAt !== null) return;
     const timer = setTimeout(() => {
       const first = Math.floor(Math.random() * 6) + 1,
         second = Math.floor(Math.random() * 6) + 1;
@@ -355,14 +478,18 @@ export default function Forge({
       setGame(result.game);
     }, 800);
     return () => clearTimeout(timer);
-  }, [started, botTurn, game, sound, pausedAt, showRollEffect]);
+  }, [started, isBotTurn, game, sound, pausedAt, showRollEffect]);
   useEffect(() => {
     if (!started || pausedAt !== null) return;
     const t = setInterval(() => {
       const now = Date.now();
       setClock(now);
       const current = gameRef.current;
-      if (current.phase !== "end" && now - current.turnStarted >= 120_000) {
+      if (
+        opponent !== "online" &&
+        current.phase !== "end" &&
+        now - current.turnStarted >= 120_000
+      ) {
         if (sound) soundCue("timeout");
         const next = applyTurnTimeout(current, now);
         gameRef.current = next;
@@ -388,7 +515,7 @@ export default function Forge({
       }
     }, 1000);
     return () => clearInterval(t);
-  }, [started, sound, pausedAt]);
+  }, [started, sound, pausedAt, opponent]);
   const left = Math.min(
     120,
     Math.max(0, 120 - Math.floor((clock - game.turnStarted) / 1000)),
@@ -428,6 +555,10 @@ export default function Forge({
     to?: number,
   ) {
     if (botTurn || game.phase !== "build") return;
+    if (opponent === "online") {
+      onlineCommand({ type: "build", building, at, to });
+      return;
+    }
     const now = Date.now();
     const next = transition(game, { type: "build", building, at, to, now });
     if (next === game) {
@@ -465,6 +596,10 @@ export default function Forge({
     setTarget(null);
   }
   function tradeWithBank(give: Goods, receive: Goods) {
+    if (opponent === "online") {
+      onlineCommand({ type: "bank", give, receive });
+      return;
+    }
     const rate = (game.players[game.turn].markets?.length ?? 0) > 0 ? 3 : 4;
     const next = transition(game, { type: "bank", give, receive });
     if (next === game) return;
@@ -513,6 +648,10 @@ export default function Forge({
     setModeDialogOpen(true);
   }
   function pauseGame() {
+    if (opponent === "online") {
+      setMessage("Online games cannot be paused.");
+      return;
+    }
     if (pauseActive.current) return;
     pauseActive.current = true;
     const now = Date.now();
@@ -540,6 +679,18 @@ export default function Forge({
     log("Game resumed.");
   }
   function leaveGame() {
+    if (opponent === "online") {
+      if (onlineSocket.current) onlineSocket.current.onclose = null;
+      onlineSocket.current?.close();
+      onlineSocket.current = null;
+      onlineRef.current = null;
+      setOnline(null);
+      setOpponent("bot");
+      setStarted(false);
+      setPausedAt(null);
+      stopSoundEffects();
+      return;
+    }
     const current = gameRef.current;
     try {
       const saved = JSON.stringify(current);
@@ -556,6 +707,10 @@ export default function Forge({
   }
   function rollDice() {
     if (game.phase !== "roll" || botTurn || pausedAt !== null) return;
+    if (opponent === "online") {
+      onlineCommand({ type: "roll" });
+      return;
+    }
     const first = Math.floor(Math.random() * 6) + 1,
       second = Math.floor(Math.random() * 6) + 1;
     setDiceFaces([first, second]);
@@ -569,6 +724,10 @@ export default function Forge({
   }
   function endTurn() {
     if (game.phase === "end" || botTurn || pausedAt !== null) return;
+    if (opponent === "online") {
+      onlineCommand({ type: "endTurn" });
+      return;
+    }
     log(`Player ${game.turn + 1} ended their turn.`);
     if (sound) soundCue("turn");
     const next = transition(game, { type: "endTurn", now: Date.now() });
@@ -634,9 +793,9 @@ export default function Forge({
     };
   });
   useEffect(() => {
-    if (!started || game.phase === "end") return;
+    if (!started || game.phase === "end" || opponent === "online") return;
     return watchFocusLoss(() => pauseHandler.current());
-  }, [started, game.phase]);
+  }, [started, game.phase, opponent]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => keyHandler.current(event);
     window.addEventListener("keydown", listener);
@@ -666,6 +825,12 @@ export default function Forge({
   if (!started) {
     return (
       <main className="forge-welcome">
+        {onlineLobby && (
+          <ForgeOnlineLobby
+            onClose={() => setOnlineLobby(false)}
+            onReady={enterOnline}
+          />
+        )}
         {confirmation}
         {modeDialogOpen && (
           <ForgeModeDialog
@@ -677,6 +842,10 @@ export default function Forge({
             }}
             onChoose={(mode) => {
               setModeDialogOpen(false);
+              if (mode === "online") {
+                setOnlineLobby(true);
+                return;
+              }
               if (hasSavedGame)
                 setPendingConfirmation(
                   mode === "bot" ? "welcome-bot" : "welcome-hotseat",
@@ -760,6 +929,11 @@ export default function Forge({
           bot={opponent === "bot"}
           onViewBoard={() => setResultDismissed(true)}
           onPlayAgain={() => {
+            if (opponent === "online") {
+              leaveGame();
+              setOnlineLobby(true);
+              return;
+            }
             startNewGame();
             if (sound) soundCue("start");
           }}
@@ -780,39 +954,46 @@ export default function Forge({
       )}
       <div className="forge-nav">
         <div className="opponent-switch" aria-label="Opponent">
-          {(["bot", "hotseat"] as const).map((option) => (
-            <button
-              key={option}
-              className={`button forge-mode-button ${opponent === option ? "primary" : "ghost"}`}
-              type="button"
-              aria-label={option === "bot" ? "Play bot" : "Two players"}
-              title={option === "bot" ? "Play bot" : "Two players"}
-              aria-pressed={opponent === option}
-              onClick={() => {
-                if (opponent !== option) setPendingConfirmation(option);
-              }}
-            >
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                {option === "bot" ? (
-                  <>
-                    <rect x="4" y="7" width="16" height="12" rx="3" />
-                    <path d="M12 7V4m-2 0h4M8 12h.01M16 12h.01M9 16h6M2 11v4m20-4v4" />
-                  </>
-                ) : (
-                  <>
-                    <circle cx="9" cy="8" r="3" />
-                    <path d="M3.5 19v-1a5.5 5.5 0 0 1 11 0v1H3.5ZM16 5.4a3 3 0 0 1 0 5.7m.2 2.5a4.5 4.5 0 0 1 4.3 4.5v.9h-3" />
-                  </>
-                )}
-              </svg>
-            </button>
-          ))}
+          {opponent !== "online" &&
+            (["bot", "hotseat"] as const).map((option) => (
+              <button
+                key={option}
+                className={`button forge-mode-button ${opponent === option ? "primary" : "ghost"}`}
+                type="button"
+                aria-label={option === "bot" ? "Play bot" : "Two players"}
+                title={option === "bot" ? "Play bot" : "Two players"}
+                aria-pressed={opponent === option}
+                onClick={() => {
+                  if (opponent !== option) setPendingConfirmation(option);
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  {option === "bot" ? (
+                    <>
+                      <rect x="4" y="7" width="16" height="12" rx="3" />
+                      <path d="M12 7V4m-2 0h4M8 12h.01M16 12h.01M9 16h6M2 11v4m20-4v4" />
+                    </>
+                  ) : (
+                    <>
+                      <circle cx="9" cy="8" r="3" />
+                      <path d="M3.5 19v-1a5.5 5.5 0 0 1 11 0v1H3.5ZM16 5.4a3 3 0 0 1 0 5.7m.2 2.5a4.5 4.5 0 0 1 4.3 4.5v.9h-3" />
+                    </>
+                  )}
+                </svg>
+              </button>
+            ))}
           <button
             className="button ghost forge-mode-button forge-online-unavailable"
             type="button"
-            disabled
-            aria-label="Online 1 vs. 1, unavailable"
-            title="Online 1 vs. 1 is not available yet"
+            aria-label="Online 1 vs. 1"
+            title="Online 1 vs. 1"
+            onClick={() => {
+              if (opponent === "online") leaveGame();
+              else {
+                setStarted(false);
+                setOnlineLobby(true);
+              }
+            }}
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="9" />
@@ -1239,7 +1420,9 @@ export default function Forge({
                 {game.phase === "end"
                   ? `Player ${(game.winner ?? 0) + 1} wins!`
                   : botTurn
-                    ? "Bot's turn"
+                    ? opponent === "online"
+                      ? "Opponent's turn"
+                      : "Bot's turn"
                     : `Player ${game.turn + 1}`}
               </h2>
               <strong>
@@ -1302,6 +1485,10 @@ export default function Forge({
                           aria-label={`Discard one ${resource}`}
                           title={`Discard one ${resource}`}
                           onClick={() => {
+                            if (opponent === "online") {
+                              onlineCommand({ type: "discard", resource });
+                              return;
+                            }
                             const next = transition(game, {
                               type: "discard",
                               resource,
@@ -1340,6 +1527,7 @@ export default function Forge({
                   key={`${opponent}-${game.turnStarted}-${game.turn}`}
                   game={game}
                   bot={opponent === "bot"}
+                  hideTrade={opponent === "online"}
                   onBank={tradeWithBank}
                   onTrade={tradeWithPlayer}
                   onCue={(cue: Cue) => {
@@ -1347,6 +1535,15 @@ export default function Forge({
                   }}
                 />
               </fieldset>
+            )}
+            {opponent === "online" && online && (
+              <ForgeOnlineTrade
+                game={game}
+                seat={online.seat}
+                offer={online.session.offer}
+                disabled={!online.connected || online.pending}
+                onCommand={onlineCommand}
+              />
             )}
             <ForgeCoach game={game} botTurn={botTurn} />
             <ForgeActivity

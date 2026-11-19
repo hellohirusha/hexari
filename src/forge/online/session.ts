@@ -4,7 +4,7 @@ import {
   type Building,
   type Game,
   type Goods,
-} from "../engine";
+} from "../engine.ts";
 
 export type Seat = 0 | 1;
 export type TradeOffer = { by: Seat; give: Goods; receive: Goods };

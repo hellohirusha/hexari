@@ -8,7 +8,7 @@ export default function ForgeModeDialog({
 }: {
   hasSavedGame: boolean;
   onResume: () => void;
-  onChoose: (mode: "bot" | "hotseat") => void;
+  onChoose: (mode: "bot" | "hotseat" | "online") => void;
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -54,16 +54,15 @@ export default function ForgeModeDialog({
             >
               Local 1 vs. 1
             </button>
-            <button
-              type="button"
-              className="button ghost forge-online-unavailable"
-              disabled
-              title="Online multiplayer is not available yet"
-            >
-              Online 1 vs. 1 <span>Unavailable</span>
-            </button>
           </>
         )}
+        <button
+          type="button"
+          className="button ghost"
+          onClick={() => onChoose("online")}
+        >
+          Online 1 vs. 1
+        </button>
       </div>
     </dialog>
   );

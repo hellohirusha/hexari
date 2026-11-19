@@ -1242,6 +1242,24 @@ html .forge-page .forge-activity-card .forge-feed {
   cursor: pointer;
   font-size: 1.5rem;
 }
+.forge-online-lobby p {
+  margin-bottom: 18px;
+}
+.forge-online-lobby label {
+  display: block;
+  margin-bottom: 16px;
+  color: var(--map-soft);
+}
+.forge-online-lobby input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px solid var(--map-line);
+  border-radius: 6px;
+  background: var(--map-panel);
+  color: var(--map-ink);
+}
 .forge-confirm h2 {
   margin: 0 0 10px;
   font-size: 1.4rem;

@@ -1,4 +1,4 @@
-import { streamCoach } from "../src/server/coachStream";
+import { streamCoach } from "../src/server/coachStream.ts";
 
 type Request = {
   method?: string;
@@ -163,12 +163,20 @@ export default async function handler(req: Request, res: Response) {
               ],
             },
           ],
-          generationConfig: { maxOutputTokens: 512 },
+          generationConfig: {
+            maxOutputTokens: 4096,
+            ...(model.startsWith("gemini-3")
+              ? { thinkingConfig: { thinkingLevel: "low" } }
+              : {}),
+          },
         }),
         signal: AbortSignal.timeout(15000),
       },
     );
-    if (response.status === 429 && env.GROQ_API_KEY) {
+    if (
+      (response.status === 429 || response.status >= 500) &&
+      env.GROQ_API_KEY
+    ) {
       const backup = await fetch(
         "https://api.groq.com/openai/v1/chat/completions",
         {

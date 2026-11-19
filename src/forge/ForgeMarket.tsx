@@ -58,12 +58,14 @@ export default function ForgeMarket({
   onBank,
   onTrade,
   onCue,
+  hideTrade = false,
 }: {
   game: Game;
   bot: boolean;
   onBank: (give: Goods, receive: Goods) => void;
   onTrade: (give: Goods, receive: Goods) => boolean;
   onCue: (cue: Cue) => void;
+  hideTrade?: boolean;
 }) {
   const [give, setGive] = useState<Goods | null>(null),
     [receive, setReceive] = useState<Goods | null>(null),
@@ -170,7 +172,7 @@ export default function ForgeMarket({
               : `Select a resource you have at least ${rate} of to exchange.`}
         </span>
       </div>
-      {game.phase === "build" && (
+      {!hideTrade && game.phase === "build" && (
         <section
           className="forge-market-section forge-side-card"
           aria-labelledby="forge-trade-heading"

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ForgeModeDialog from "../src/forge/ForgeModeDialog";
 
 describe("Forge game selection", () => {
-  it("shows all modes and marks online as unavailable", () => {
+  it("offers online alongside local game modes", () => {
     const html = renderToStaticMarkup(
       <ForgeModeDialog
         hasSavedGame={false}
@@ -15,7 +15,7 @@ describe("Forge game selection", () => {
     expect(html).toContain("Play with bot");
     expect(html).toContain("Local 1 vs. 1");
     expect(html).toContain("Online 1 vs. 1");
-    expect(html).toContain("disabled");
+    expect(html).not.toContain("disabled");
     expect(html).not.toContain("Resume game");
   });
   it("offers resume when a saved game exists", () => {
@@ -30,6 +30,6 @@ describe("Forge game selection", () => {
     expect(html).toContain("Resume game");
     expect(html).not.toContain("Play with bot");
     expect(html).not.toContain("Local 1 vs. 1");
-    expect(html).not.toContain("Online 1 vs. 1");
+    expect(html).toContain("Online 1 vs. 1");
   });
 });
