@@ -27,6 +27,10 @@ function describePlayer(player: Player) {
 export function forgeCoachState(game: Game, question: string) {
   const me = game.players[game.turn];
   const other = game.players[1 - game.turn];
+  const handSize = Object.values(me.hand).reduce(
+    (total, count) => total + count,
+    0,
+  );
   const options = buildKinds.map((kind) => {
     const option = buildOptions(game, kind);
     const cost = Object.entries(costs[kind])
@@ -41,7 +45,7 @@ export function forgeCoachState(game: Game, question: string) {
     vp: points(me),
     hand: me.hand,
     question,
-    buildings: `Forge: first to 5 points; settlement 1 point, city 2. A successful build ends the turn. Farms add one wheat on matching rolls; markets improve bank trades to 3:1. One improvement per building, maximum one market. No robber, ports, development cards or longest-road points. Hand cap 7; excess production is lost. Player trades are one card each and require acceptance. Current phase: ${game.phase}; ${game.phase === "roll" ? "roll before building or trading" : "dice have been rolled"}. Current player: ${describePlayer(me)}. Build options: ${options.join("; ")}. Legal locations are counts, not suggestions; do not invent specific locations.`,
+    buildings: `Forge: first to 5 points; settlement 1 point, city 2. A successful build ends the turn. Farms add one wheat on matching rolls; markets improve bank trades to 3:1. One improvement per building, maximum one market. No robber, ports, development cards or longest-road points. Hand cap 7; current hand ${handSize} cards, ${Math.max(0, 7 - handSize)} spaces free; excess production is lost. Player trades are one card each and require acceptance. Current phase: ${game.phase}; ${game.phase === "roll" ? "roll before building or trading" : "dice have been rolled"}. Current player: ${describePlayer(me)}. Build options: ${options.join("; ")}. Legal locations are counts, not suggestions; do not invent specific locations.`,
     opponents: `Visible opponent: ${describePlayer(other)}. Opponent hand is hidden.`,
     history: [],
   };
