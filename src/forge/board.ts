@@ -4,7 +4,7 @@ import {
   vertices as standardVertices,
   type Tile,
   type Vertex,
-} from "../shared/board";
+} from "../shared/board.ts";
 
 // Keep the original six outer tiles first, preserving saved corner IDs.
 const existingOuterHexes = [
