@@ -1522,6 +1522,14 @@ html[data-theme="light"] .forge-nav .button.ghost {
 .forge-coach-result p {
   margin: 6px 0;
 }
+.coach-advice {
+  margin: 10px 0;
+  padding-left: 1.4em;
+  line-height: 1.5;
+}
+.coach-advice li + li {
+  margin-top: 6px;
+}
 .forge-disclosure > summary,
 .tools-disclosure > summary {
   cursor: pointer;
