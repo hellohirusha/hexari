@@ -31,12 +31,12 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
       - name: Install project dependencies
         run: npm ci
       - name: Install Vercel CLI
-        run: npm install --global vercel@55.0.0
+        run: npm install --global vercel@66.2.0
       - name: Pull production project settings
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
