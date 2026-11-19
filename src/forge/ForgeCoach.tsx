@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { defaultBoard } from "./board";
-import { points, type Game, type Player } from "./engine";
+import { type Game } from "./engine";
+import { forgeCoachState } from "./coachContext";
 import ForgeMessageDialog from "./ForgeMessageDialog";
 import { requestCoach } from "../shared/coachClient";
 import { useRef } from "react";
@@ -11,12 +11,6 @@ const questions = [
   "What is my winning line?",
 ] as const;
 const questionLabels = ["Build", "Catch up", "Win"] as const;
-function describePlayer(player: Player) {
-  const corners = (values: number[]) =>
-    values.length ? values.map((value) => value + 1).join(", ") : "none";
-  return `settlements: ${corners(player.settlements)}; cities: ${corners(player.cities)}; farms: ${corners(player.farms ?? [])}; markets: ${corners(player.markets ?? [])}; roads: ${player.roads.length ? player.roads.map(([a, b]) => `${a + 1}-${b + 1}`).join(", ") : "none"}; points: ${points(player)}`;
-}
-
 export default function ForgeCoach({
   game,
   botTurn,
@@ -37,24 +31,13 @@ export default function ForgeCoach({
   async function ask() {
     if (busy || botTurn || game.phase === "end") return;
     const player = game.turn + 1;
-    const me = game.players[game.turn],
-      other = game.players[1 - game.turn];
     setBusy(true);
     setResult(null);
     const controller = new AbortController();
     request.current = controller;
     try {
       const advice = await requestCoach(
-        {
-          board: defaultBoard,
-          turn: null,
-          vp: points(me),
-          hand: me.hand,
-          question,
-          buildings: `Forge speed variant: first to 5 points; settlements 1 point, cities 2. Farms at wheat-adjacent buildings grant one extra wheat on a matching roll; markets improve bank trades from 4:1 to 3:1. Improvements give no points; one improvement per building. A successful build ends the turn. No robber, ports, development cards or longest-road points. Seven-card hand cap, excess production lost, one-card-for-one-card player trades require acceptance, voluntary discards allowed. Each player starts with one settlement and one of each resource. Current phase: ${game.phase}. Current player: ${describePlayer(me)}.`,
-          opponents: `Visible opponent: ${describePlayer(other)}. Opponent hand is hidden.`,
-          history: [],
-        },
+        forgeCoachState(game, question),
         (answer) => setResult({ player, answer, error: false }),
         controller.signal,
       );
