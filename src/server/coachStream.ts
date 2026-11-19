@@ -1,4 +1,4 @@
-import { eventData } from "../shared/eventStream";
+import { eventData } from "../shared/eventStream.ts";
 
 type StreamResponse = {
   status: (n: number) => StreamResponse;
@@ -47,13 +47,24 @@ export async function streamCoach(
               },
               body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: { maxOutputTokens: 512 },
+                generationConfig: {
+                  maxOutputTokens: 4096,
+                  ...((env.GEMINI_MODEL || "gemini-3.8-flash").startsWith(
+                    "gemini-3",
+                  )
+                    ? { thinkingConfig: { thinkingLevel: "low" } }
+                    : {}),
+                },
               }),
               signal: AbortSignal.timeout(30000),
             },
           )
         : await groq();
-    if (provider === "gemini" && response.status === 429 && env.GROQ_API_KEY) {
+    if (
+      provider === "gemini" &&
+      (response.status === 429 || response.status >= 500) &&
+      env.GROQ_API_KEY
+    ) {
       await response.body?.cancel();
       provider = "groq";
       response = await groq();
