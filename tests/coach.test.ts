@@ -160,29 +160,50 @@ describe("coach endpoint", () => {
     expect(result.code).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
-  it("falls back to Groq on a Gemini rate limit", async () => {
+  it.each([429, 503])(
+    "falls back to Groq on a Gemini %s response",
+    async (status) => {
+      vi.stubEnv("GEMINI_API_KEY", "test-key");
+      vi.stubEnv("GROQ_API_KEY", "backup-key");
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, status })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: "Build a road." } }],
+          }),
+        });
+      vi.stubGlobal("fetch", fetchMock);
+      const { res, result } = response();
+      await handler({ method: "POST", body: state() }, res);
+      expect(result.code).toBe(200);
+      expect(result.body).toEqual({ advice: "Build a road." });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("falls back to Groq on a Gemini service outage", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.stubEnv("GROQ_API_KEY", "backup-key");
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ ok: false, status: 429 })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          choices: [{ message: { content: "Build a road." } }],
-        }),
-      });
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(
+        new Response(
+          'data: {"choices":[{"delta":{"content":"Build a road."}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        ),
+      );
     vi.stubGlobal("fetch", fetchMock);
     const { res, result } = response();
-    await handler({ method: "POST", body: state() }, res);
-    expect(result.code).toBe(200);
-    expect(result.body).toEqual({ advice: "Build a road." });
+    await handler({ method: "POST", body: { ...state(), stream: true } }, res);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.chunks.join("")).toContain('"text":"Build a road."');
+    expect(result.chunks.join("")).toContain('"type":"done"');
   });
-  it("does not fall back on an unrelated provider error", async () => {
+  it("does not fall back on a Gemini authentication error", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.stubEnv("GROQ_API_KEY", "backup-key");
-    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 401 });
     vi.stubGlobal("fetch", fetchMock);
     const { res, result } = response();
     await handler({ method: "POST", body: state() }, res);
