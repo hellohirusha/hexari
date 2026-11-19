@@ -3,6 +3,7 @@ import { type Game } from "./engine";
 import { forgeCoachState } from "./coachContext";
 import ForgeMessageDialog from "./ForgeMessageDialog";
 import { requestCoach } from "../shared/coachClient";
+import CoachAdvice from "../shared/CoachAdvice";
 import { useRef } from "react";
 
 const questions = [
@@ -149,7 +150,11 @@ export default function ForgeCoach({
               setResult(null);
             }}
           >
-            <p>{result.answer}</p>
+            {result.error ? (
+              <p>{result.answer}</p>
+            ) : (
+              <CoachAdvice advice={result.answer} />
+            )}
             {!result.error && (
               <small>Based on the position when you asked.</small>
             )}
