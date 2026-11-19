@@ -29,6 +29,7 @@ import {
 import { simulateStrategyDistribution } from "./engine/strategySimulation";
 import { emptyHand, goods, type Hand } from "../shared/resources";
 import { requestCoach } from "../shared/coachClient";
+import CoachAdvice from "../shared/CoachAdvice";
 type CoachEntry = { board: string; question: string; advice: string };
 function savedCoachHistory(): CoachEntry[] {
   try {
@@ -95,6 +96,7 @@ export default function Companion() {
     [question, setQuestion] = useState("What should I build?"),
     [hand, setHand] = useState<Hand>(emptyHand),
     [answer, setAnswer] = useState(""),
+    [coachError, setCoachError] = useState(false),
     [coachHistory, setCoachHistory] = useState<CoachEntry[]>(savedCoachHistory),
     [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -140,6 +142,7 @@ export default function Companion() {
   async function coach() {
     setBusy(true);
     setAnswer("");
+    setCoachError(false);
     try {
       const advice = await requestCoach(
         {
@@ -172,6 +175,7 @@ export default function Companion() {
         ].slice(-12),
       );
     } catch (e) {
+      setCoachError(true);
       setAnswer(e instanceof Error ? e.message : "Coach unavailable");
     } finally {
       setBusy(false);
@@ -313,7 +317,11 @@ export default function Companion() {
               {answer && (
                 <div className="result-card">
                   <small>COACH RESPONSE</small>
-                  <p>{answer}</p>
+                  {coachError ? (
+                    <p>{answer}</p>
+                  ) : (
+                    <CoachAdvice advice={answer} />
+                  )}
                 </div>
               )}
               {coachHistory.some(
@@ -328,7 +336,7 @@ export default function Companion() {
                     .map((entry, index) => (
                       <div key={`${entry.question}-${index}`}>
                         <strong>{entry.question}</strong>
-                        <p>{entry.advice}</p>
+                        <CoachAdvice advice={entry.advice} />
                       </div>
                     ))}
                   <button

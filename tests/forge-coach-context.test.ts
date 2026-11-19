@@ -30,6 +30,13 @@ describe("Forge coach context", () => {
     expect(forgeCoachState(beforeRoll, "Build").buildings).toContain(
       "roll before building or trading",
     );
+    expect(forgeCoachState(beforeRoll, "Build").buildings).toContain(
+      "current hand 5 cards, 2 spaces free",
+    );
+    beforeRoll.players[0].hand.ore = 3;
+    expect(forgeCoachState(beforeRoll, "Build").buildings).toContain(
+      "current hand 7 cards, 0 spaces free",
+    );
     const game = transition(beforeRoll, { type: "roll", total: 7 });
     const roads = buildOptions(game, "road");
     const context = forgeCoachState(game, "Build").buildings;
