@@ -1,5 +1,6 @@
 import {
   goods,
+  bestSetupSettlement,
   transition,
   type Building,
   type Game,
@@ -12,6 +13,7 @@ export type OnlineSession = {
   game: Game;
   revision: number;
   offer: TradeOffer | null;
+  names?: [string, string];
 };
 export type OnlineCommand =
   | { type: "roll" }
@@ -61,7 +63,7 @@ export function applyOnlineCommand(
     if (command.type === "decline")
       return {
         ok: true,
-        session: { game, offer: null, revision: nextRevision },
+        session: { ...session, game, offer: null, revision: nextRevision },
       };
     const next = transition(game, {
       type: "playerTrade",
@@ -72,7 +74,7 @@ export function applyOnlineCommand(
       return { ok: false, reason: "Trade is no longer available." };
     return {
       ok: true,
-      session: { game: next, offer: null, revision: nextRevision },
+      session: { ...session, game: next, offer: null, revision: nextRevision },
     };
   }
   if (actor !== game.turn) return { ok: false, reason: "Not your turn." };
@@ -88,6 +90,7 @@ export function applyOnlineCommand(
     return {
       ok: true,
       session: {
+        ...session,
         game,
         revision: nextRevision,
         offer: { by: actor, give: command.give, receive: command.receive },
@@ -99,7 +102,13 @@ export function applyOnlineCommand(
   switch (command.type) {
     case "roll": {
       if (game.phase !== "roll")
-        return { ok: false, reason: "Dice already rolled." };
+        return {
+          ok: false,
+          reason:
+            game.phase === "setup"
+              ? "Place your starting settlement first."
+              : "Dice already rolled.",
+        };
       dice = rollDice();
       if (
         dice.length !== 2 ||
@@ -110,13 +119,15 @@ export function applyOnlineCommand(
       break;
     }
     case "endTurn":
+      if (game.phase === "setup")
+        return { ok: false, reason: "Place your starting settlement first." };
+      if (game.phase === "roll")
+        return { ok: false, reason: "Roll before ending your turn." };
       next = transition(game, { type: "endTurn", now });
       break;
     case "build":
       if (
-        !(["road", "settlement", "city", "market", "farm"] as const).includes(
-          command.building,
-        ) ||
+        !(["road", "settlement", "city"] as const).includes(command.building) ||
         !Number.isSafeInteger(command.at) ||
         (command.to !== undefined && !Number.isSafeInteger(command.to))
       )
@@ -139,7 +150,55 @@ export function applyOnlineCommand(
   if (next === game) return { ok: false, reason: "Action is not legal." };
   return {
     ok: true,
-    session: { game: next, revision: nextRevision, offer: null },
+    session: { ...session, game: next, revision: nextRevision, offer: null },
     ...(dice ? { dice } : {}),
   };
+}
+
+/** On a timeout, roll first when necessary, then pass the turn. */
+export function timeoutOnlineTurn(
+  session: OnlineSession,
+  now: number,
+  rollDice: () => [number, number],
+): CommandResult {
+  if (session.game.phase === "setup") {
+    const at = bestSetupSettlement(session.game);
+    if (at === undefined)
+      return {
+        ok: false,
+        reason: "No starting settlement location available.",
+      };
+    return applyOnlineCommand(
+      session,
+      session.game.turn,
+      session.revision,
+      { type: "build", building: "settlement", at },
+      now,
+      rollDice,
+    );
+  }
+  let current = session;
+  let dice: [number, number] | undefined;
+  if (current.game.phase === "roll") {
+    const rolled = applyOnlineCommand(
+      current,
+      current.game.turn,
+      current.revision,
+      { type: "roll" },
+      now,
+      rollDice,
+    );
+    if (!rolled.ok) return rolled;
+    current = rolled.session;
+    dice = rolled.dice;
+  }
+  const ended = applyOnlineCommand(
+    current,
+    current.game.turn,
+    current.revision,
+    { type: "endTurn" },
+    now,
+    rollDice,
+  );
+  return ended.ok && dice ? { ...ended, dice } : ended;
 }
