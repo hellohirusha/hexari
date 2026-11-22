@@ -27,12 +27,14 @@ export function rankSettlements(
     }))
     .sort((a, b) => b.score - a.score || a.id - b.id);
   const legal = ranked.filter((entry) => entry.eligible);
+  const bestScore = Math.max(0, ...legal.map((entry) => entry.score));
   return ranked.map((entry) => {
     if (!entry.eligible)
       return {
         ...entry,
         rank: null,
         percentile: null,
+        scoreOutOf100: null,
         eligibleCount: legal.length,
       };
     const rank = 1 + legal.filter((other) => other.score > entry.score).length;
@@ -41,6 +43,14 @@ export function rankSettlements(
         ? 100
         : (100 * legal.filter((other) => other.score < entry.score).length) /
           (legal.length - 1);
-    return { ...entry, rank, percentile, eligibleCount: legal.length };
+    const scoreOutOf100 =
+      bestScore > 0 ? Math.min(100, (100 * entry.score) / bestScore) : 0;
+    return {
+      ...entry,
+      rank,
+      percentile,
+      scoreOutOf100,
+      eligibleCount: legal.length,
+    };
   });
 }
