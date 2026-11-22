@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function ForgeModeDialog({
   hasSavedGame,
@@ -12,6 +12,7 @@ export default function ForgeModeDialog({
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const [choosingNew, setChoosingNew] = useState(false);
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
@@ -34,10 +35,19 @@ export default function ForgeModeDialog({
         </button>
       </div>
       <div className="forge-welcome-actions">
-        {hasSavedGame ? (
-          <button type="button" className="button primary" onClick={onResume}>
-            Resume game
-          </button>
+        {hasSavedGame && !choosingNew ? (
+          <>
+            <button type="button" className="button primary" onClick={onResume}>
+              Resume game
+            </button>
+            <button
+              type="button"
+              className="button ghost"
+              onClick={() => setChoosingNew(true)}
+            >
+              Start new game
+            </button>
+          </>
         ) : (
           <>
             <button
