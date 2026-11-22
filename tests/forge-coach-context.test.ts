@@ -5,6 +5,19 @@ import { forgeCoachState } from "../src/forge/coachContext";
 import { newGame, transition } from "../src/forge/engine";
 
 describe("Forge coach context", () => {
+  it("passes only the last three bounded advice entries for the current player", () => {
+    const game = newGame(0);
+    const history = Array.from({ length: 4 }, (_, index) => ({
+      question: `Question ${index}`,
+      advice: "x".repeat(700),
+    }));
+    const state = forgeCoachState(game, "Build", history);
+    expect(state.history).toHaveLength(3);
+    expect(state.history[0].question).toBe("Question 1");
+    expect(state.history.every((entry) => entry.advice.length === 600)).toBe(
+      true,
+    );
+  });
   it("describes the actual production at each player's buildings without exposing the opponent's hand", () => {
     const game = newGame(0);
     game.players[1].hand.ore = 73;
@@ -45,5 +58,7 @@ describe("Forge coach context", () => {
       `road costs 1 wood, 1 brick; affordable; ${roads.edges.length} legal locations`,
     );
     expect(context).toContain("city costs 2 wheat, 3 ore; not affordable");
+    expect(context).toContain("Bank trades exchange four matching cards");
+    expect(context).not.toMatch(/farms?|markets?/i);
   });
 });
