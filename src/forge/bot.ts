@@ -4,8 +4,9 @@ import {
   goods,
   legalRoad,
   legalSettlement,
-  legalImprovement,
   bankRate,
+  longestRoadLength,
+  bestSetupSettlement,
   transition,
   type Game,
   type Goods,
@@ -28,12 +29,27 @@ export function playAutomatedTurn(
   now: number,
 ): { game: Game; actions: string[] } {
   if (game.phase === "end") return { game, actions: [] };
+  if (game.phase === "setup") {
+    const at = bestSetupSettlement(game);
+    if (at === undefined) return { game, actions: [] };
+    return {
+      game: transition(game, {
+        type: "build",
+        building: "settlement",
+        at,
+        now,
+      }),
+      actions: [`Placed starting settlement at corner ${at + 1}`],
+    };
+  }
   let state =
     game.phase === "roll"
       ? transition(game, { type: "roll", total: roll })
       : game;
   const actions: string[] =
     game.phase === "roll" && state !== game ? [`Rolled ${roll}`] : [];
+  if (game.phase === "roll" && state !== game && roll === 7)
+    actions.push("A 7 grants supply to each player with room");
   for (let i = 0; i < 12 && state.phase === "build"; i++) {
     const player = state.players[state.turn];
     let next = state;
@@ -50,45 +66,62 @@ export function playAutomatedTurn(
         now,
       });
       label = "Upgraded a city";
+      if (next.winner !== state.turn) {
+        next = state;
+        label = "";
+      }
     }
-    if (
-      next === state &&
-      player.hand.wood >= 2 &&
-      player.hand.brick >= 1 &&
-      player.hand.sheep >= 1 &&
-      !player.markets?.length
-    ) {
-      const corner = [...player.settlements, ...player.cities].find((id) =>
-        legalImprovement(state, "market", id),
+    // Check for an immediate win, including the longest-road award.
+    if (next === state && player.hand.wood && player.hand.brick) {
+      const edges = vertices.flatMap((v) =>
+        v.neighbors
+          .filter((id) => v.id < id && legalRoad(state, v.id, id))
+          .map((id) => [v.id, id] as const),
       );
-      if (corner !== undefined) {
-        next = transition(state, {
+      for (const [a, b] of edges) {
+        const trial = transition(state, {
           type: "build",
-          building: "market",
-          at: corner,
+          building: "road",
+          at: a,
+          to: b,
           now,
         });
-        label = "Built a market";
+        if (trial.winner === state.turn) {
+          next = trial;
+          label = "Built a road";
+          break;
+        }
+      }
+      if (next === state && player.hand.wheat && player.hand.sheep) {
+        for (const corner of vertices) {
+          if (!legalSettlement(state, corner.id)) continue;
+          const trial = transition(state, {
+            type: "build",
+            building: "settlement",
+            at: corner.id,
+            now,
+          });
+          if (trial.winner === state.turn) {
+            next = trial;
+            label = `Built at corner ${corner.id + 1}`;
+            break;
+          }
+        }
       }
     }
     if (
       next === state &&
-      player.hand.wood &&
-      player.hand.brick &&
-      player.hand.wheat
+      player.hand.ore >= 3 &&
+      player.hand.wheat >= 2 &&
+      player.settlements.length
     ) {
-      const corner = [...player.settlements, ...player.cities].find((id) =>
-        legalImprovement(state, "farm", id),
-      );
-      if (corner !== undefined) {
-        next = transition(state, {
-          type: "build",
-          building: "farm",
-          at: corner,
-          now,
-        });
-        label = "Built a farm";
-      }
+      next = transition(state, {
+        type: "build",
+        building: "city",
+        at: player.settlements[0],
+        now,
+      });
+      label = "Upgraded a city";
     }
     if (
       next === state &&
@@ -112,7 +145,9 @@ export function playAutomatedTurn(
       next === state &&
       player.hand.wood &&
       player.hand.brick &&
-      !vertices.some((v) => legalSettlement(state, v.id))
+      (!vertices.some((v) => legalSettlement(state, v.id)) ||
+        !player.hand.wheat ||
+        !player.hand.sheep)
     ) {
       const options = vertices.flatMap((v) =>
         v.neighbors
@@ -142,7 +177,16 @@ export function playAutomatedTurn(
                 ),
               )
             : -1;
-          return { trial, score, road };
+          return {
+            trial,
+            score:
+              score +
+              longestRoadLength(
+                trial.players[state.turn],
+                trial.players[1 - state.turn],
+              ),
+            road,
+          };
         })
         .sort((a, b) => b.score - a.score);
       if (scored.length) {
@@ -151,7 +195,7 @@ export function playAutomatedTurn(
       }
     }
     if (next === state) {
-      const give = goods.find((g) => player.hand[g] >= bankRate(player));
+      const give = goods.find((g) => player.hand[g] >= bankRate());
       const receive: Goods =
         player.hand.wood === 0
           ? "wood"
