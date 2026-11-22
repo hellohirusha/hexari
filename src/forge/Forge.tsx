@@ -7,32 +7,48 @@ import {
   scheduleSoundCue,
   setMasterVolume,
   startWelcomeMusic,
+  startResultMusic,
   stopSoundEffects,
   type Cue,
   type WelcomeMusicPlayer,
 } from "./sound";
 import { BuildingArt, TerrainArt } from "../shared/TerrainArt";
-import ForgeActivity, { type ChatMessage } from "./ForgeActivity";
+import ForgeActivity, {
+  onlineChatPlayerName,
+  type ChatMessage,
+} from "./ForgeActivity";
 import ForgeGuide from "./ForgeGuide";
-import ForgeCoach from "./ForgeCoach";
+import ForgeCoach, { clearLocalForgeCoachHistory } from "./ForgeCoach";
 import Die from "./Die";
 import ForgeMarket from "./ForgeMarket";
 import ForgeConfirm from "./ForgeConfirm";
 import ForgeModeDialog from "./ForgeModeDialog";
-import ForgeOnlineLobby, { type OnlineConnection } from "./ForgeOnlineLobby";
+import ForgeOnlineLobby, {
+  ONLINE_SESSION_KEY,
+  onlineCredentials,
+  type OnlineConnection,
+} from "./ForgeOnlineLobby";
+import { loadAccountClient, validPlayerName } from "./account";
+import { getBotNickname, getOrCreateNickname } from "./nickname";
+import type { Session } from "@supabase/supabase-js";
 import ForgeOnlineTrade from "./ForgeOnlineTrade";
 import type { OnlineCommand, OnlineSession, Seat } from "./online/session";
+import { isOpponentDeparture } from "./online/opponentDeparture";
+import { linkOnlineAccount } from "./online/accountLink";
 import { FONT_SIZE_KEY, readFontSize } from "./fontSize";
 import ForgeSettings from "./ForgeSettings";
 import ForgePause from "./ForgePause";
 import ForgeResult from "./ForgeResult";
+import ForgeOpponentLeftNotice from "./ForgeOpponentLeftNotice";
 import ForgeBuildPopover from "./ForgeBuildPopover";
 import ForgeBuildCards from "./ForgeBuildCards";
+import { placementSound } from "./placementSound";
 import { buildKinds, buildOptions } from "./buildOptions";
 import { parseResumableGame } from "./savedGame";
 import { watchFocusLoss } from "./focusPause";
 import { applyTurnTimeout } from "./turnTimeout";
 import { matchingRollTiles } from "./rollHighlight";
+import { turnLabel } from "./turnLabel";
 import BrandMark from "../shared/BrandMark";
 import {
   useCallback,
@@ -48,9 +64,11 @@ const forgeGeometry = { centers, x: -80, y: -80, width: 640, height: 530 };
 import {
   goods,
   legalRoad,
+  legalSetupSettlement,
   legalSettlement,
   newGame,
-  points,
+  totalPoints,
+  longestRoadOwner,
   transition,
   type Game,
   type Goods,
@@ -66,6 +84,13 @@ const terrain = {
   desert: "#d2bd8b",
 };
 const key = "hexari-forge-v1";
+// These functions are called in event handlers, never while rendering.
+function eventTime() {
+  return Date.now();
+}
+function eventDie() {
+  return Math.floor(Math.random() * 6) + 1;
+}
 function storedList<T>(
   storageKey: string,
   valid: (item: unknown) => item is T,
@@ -79,11 +104,14 @@ function storedList<T>(
 }
 function restore(): Game {
   try {
-    return parseResumableGame(localStorage.getItem(key)) ?? newGame();
+    return (
+      parseResumableGame(localStorage.getItem(key)) ??
+      newGame(undefined, { manualSetup: true })
+    );
   } catch {
     /* start fresh */
   }
-  return newGame();
+  return newGame(undefined, { manualSetup: true });
 }
 export default function Forge({
   standalone = false,
@@ -136,7 +164,11 @@ export default function Forge({
       building: Building;
       turnStarted: number;
     } | null>(null),
-    [settingsOpen, setSettingsOpen] = useState(false),
+    [settingsOpen, setSettingsOpen] = useState(() =>
+      ["recovery", "confirm"].includes(
+        new URLSearchParams(window.location.search).get("account") ?? "",
+      ),
+    ),
     [resultDismissed, setResultDismissed] = useState(false),
     [menuOpen, setMenuOpen] = useState(false),
     [pausedAt, setPausedAt] = useState<number | null>(null),
@@ -160,21 +192,148 @@ export default function Forge({
         ),
       ),
     );
-  const [onlineLobby, setOnlineLobby] = useState(() =>
-    new URLSearchParams(window.location.hash.slice(1)).has("forge-room"),
+  const [onlineLobby, setOnlineLobby] = useState(
+    () =>
+      !["recovery", "confirm"].includes(
+        new URLSearchParams(window.location.search).get("account") ?? "",
+      ) &&
+      (new URLSearchParams(window.location.hash.slice(1)).has("forge-room") ||
+        !!onlineCredentials()),
   );
+  const [coachGeneration, setCoachGeneration] = useState(0);
+  const [guestNickname] = useState(getOrCreateNickname);
+  const [botNickname] = useState(getBotNickname);
+  const [account, setAccount] = useState<{
+    signedIn: boolean;
+    id: string | null;
+    name: string | null;
+  }>({ signedIn: false, id: null, name: null });
+  useEffect(() => {
+    let active = true;
+    let unsubscribe = () => {};
+    let authVersion = 0;
+    const updateAccount = (session: Session | null) => {
+      if (!active) return;
+      const name: unknown = session?.user.user_metadata.display_name;
+      setAccount({
+        signedIn: !!session,
+        id: session?.user.id ?? null,
+        name:
+          typeof name === "string" && validPlayerName(name)
+            ? name.trim()
+            : null,
+      });
+    };
+    void loadAccountClient()
+      .then(async (client) => {
+        if (!client || !active) return;
+        const { data } = client.auth.onAuthStateChange((_event, session) => {
+          authVersion++;
+          updateAccount(session);
+        });
+        unsubscribe = () => data.subscription.unsubscribe();
+        const version = authVersion;
+        const result = await client.auth.getSession();
+        if (version === authVersion) updateAccount(result.data.session);
+      })
+      .catch(() => {
+        if (active) setAccount({ signedIn: false, id: null, name: null });
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+  const buildTrigger = useRef<SVGElement | null>(null);
+  const [openAccount, setOpenAccount] = useState(false);
+  const returnToOnline = useRef(false);
+  const accountCallback = ["recovery", "confirm"].includes(
+    new URLSearchParams(window.location.search).get("account") ?? "",
+  );
+  function closeSettings() {
+    setSettingsOpen(false);
+    setOpenAccount(false);
+    if (accountCallback) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("account");
+      window.history.replaceState(
+        null,
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+      if (onlineCredentials()) setOnlineLobby(true);
+    }
+    if (returnToOnline.current) {
+      returnToOnline.current = false;
+      setOnlineLobby(true);
+    }
+  }
   const [online, setOnline] = useState<{
     seat: Seat;
     session: OnlineSession;
     connected: boolean;
     pending: boolean;
+    recoverable?: boolean;
   } | null>(null);
+  const [opponentLeft, setOpponentLeft] = useState(false);
   const onlineSocket = useRef<WebSocket | null>(null);
+  const onlineRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onlineRef = useRef(online);
   useEffect(() => {
-    onlineRef.current = online;
-  }, [online]);
-  useEffect(() => () => onlineSocket.current?.close(), []);
+    const accountId = account.id;
+    const socket = onlineSocket.current;
+    if (opponent !== "online" || !online?.connected || !accountId || !socket)
+      return;
+    let active = true;
+    void linkOnlineAccount(
+      accountId,
+      async () => {
+        const client = await loadAccountClient();
+        if (!client) return null;
+        const result = await client.auth.getSession();
+        if (result.error) throw result.error;
+        return result.data.session;
+      },
+      socket,
+      () =>
+        active &&
+        onlineSocket.current === socket &&
+        onlineRef.current?.connected === true &&
+        socket.readyState === WebSocket.OPEN,
+    ).catch(() => {
+      if (active) setMessage("Could not link your account. Try again.");
+    });
+    return () => {
+      active = false;
+    };
+  }, [account.id, account.name, online?.connected, opponent]);
+  const pendingOnlineExit = useRef<"welcome" | "match" | null>(null);
+  const pendingChats = useRef(
+    new Map<
+      string,
+      { resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout> }
+    >(),
+  );
+  const lastChatAttempt = useRef<{ text: string; requestId: string } | null>(
+    null,
+  );
+  const soundRef = useRef(sound);
+  useEffect(() => {
+    soundRef.current = sound;
+  }, [sound]);
+  useEffect(
+    () => () => {
+      if (onlineRetry.current) clearTimeout(onlineRetry.current);
+      for (const pending of pendingChats.current.values()) {
+        clearTimeout(pending.timer);
+        pending.resolve(false);
+      }
+      pendingChats.current.clear();
+      if (onlineSocket.current) onlineSocket.current.onclose = null;
+      onlineSocket.current?.close();
+    },
+    [],
+  );
   function onlineCommand(command: OnlineCommand) {
     const current = onlineRef.current;
     if (
@@ -187,13 +346,62 @@ export default function Forge({
       return;
     onlineRef.current = { ...current, pending: true };
     setOnline(onlineRef.current);
-    onlineSocket.current.send(
-      JSON.stringify({
-        type: "command",
-        revision: current.session.revision,
-        command,
-      }),
-    );
+    try {
+      onlineSocket.current.send(
+        JSON.stringify({
+          type: "command",
+          revision: current.session.revision,
+          command,
+        }),
+      );
+    } catch {
+      onlineRef.current = { ...current, pending: false, connected: false };
+      setOnline(onlineRef.current);
+      setMessage("The online connection is unavailable.");
+    }
+  }
+  function sendOnlineEvent(
+    event:
+      | { type: "chat"; text: string; requestId: string }
+      | { type: "report"; id: string }
+      | { type: "linkAccount"; accessToken: string },
+  ): boolean {
+    const socket = onlineSocket.current;
+    if (
+      !onlineRef.current?.connected ||
+      !socket ||
+      socket.readyState !== WebSocket.OPEN
+    ) {
+      setMessage("The online connection is unavailable.");
+      return false;
+    }
+    try {
+      socket.send(JSON.stringify(event));
+      return true;
+    } catch {
+      setMessage("The online connection is unavailable.");
+      return false;
+    }
+  }
+  function sendOnlineChat(text: string): Promise<boolean> {
+    if (!globalThis.crypto?.randomUUID) return Promise.resolve(false);
+    const requestId =
+      lastChatAttempt.current?.text === text
+        ? lastChatAttempt.current.requestId
+        : globalThis.crypto.randomUUID();
+    lastChatAttempt.current = { text, requestId };
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        pendingChats.current.delete(requestId);
+        resolve(false);
+      }, 12000);
+      pendingChats.current.set(requestId, { resolve, timer });
+      if (!sendOnlineEvent({ type: "chat", text, requestId })) {
+        clearTimeout(timer);
+        pendingChats.current.delete(requestId);
+        resolve(false);
+      }
+    });
   }
   const gameRef = useRef(game);
   const diceDisplayRef = useRef<HTMLSpanElement>(null);
@@ -256,9 +464,20 @@ export default function Forge({
   const pauseHandler = useRef<() => void>(() => {});
   const pauseActive = useRef(false);
   function enterOnline(connection: OnlineConnection) {
-    const { socket, seat, session } = connection;
+    const {
+      socket,
+      seat,
+      session,
+      peerConnected: initialPeerConnected,
+    } = connection;
     onlineSocket.current = socket;
-    const current = { seat, session, connected: true, pending: false };
+    setOpponentLeft(false);
+    const current = {
+      seat,
+      session,
+      connected: initialPeerConnected,
+      pending: false,
+    };
     onlineRef.current = current;
     setOnline(current);
     setOpponent("online");
@@ -268,65 +487,209 @@ export default function Forge({
     setTarget(null);
     setBuildSelection(null);
     setActivity([]);
+    setChat([]);
+    setCoachGeneration((generation) => generation + 1);
     setMessage("");
     gameRef.current = session.game;
     setStarted(true);
     setOnlineLobby(false);
     setModeDialogOpen(false);
     welcomeMusicRef.current?.stop();
+    welcomeMusicRef.current = null;
     window.history.replaceState(
       null,
       "",
       window.location.pathname + window.location.search,
     );
-    socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(String(event.data));
-        if (data.type === "state") {
-          const previous = onlineRef.current;
-          if (!previous) return;
-          const updated = {
-            ...previous,
-            session: data.session as OnlineSession,
-            pending: false,
-          };
-          onlineRef.current = updated;
-          setOnline(updated);
-          gameRef.current = updated.session.game;
-          setGame(updated.session.game);
-          setClock(Date.now());
-          setTarget(null);
-          if (Array.isArray(data.dice) && data.dice.length === 2) {
-            setDiceFaces([data.dice[0], data.dice[1]]);
-            setDiceAnimation((n) => n + 1);
+    let peerConnected = initialPeerConnected;
+    let retryUntil = 0;
+    const updateConnection = (connected: boolean) => {
+      if (!onlineRef.current) return;
+      onlineRef.current = { ...onlineRef.current, connected, pending: false };
+      setOnline(onlineRef.current);
+    };
+    const bind = (activeSocket: WebSocket) => {
+      onlineSocket.current = activeSocket;
+      let closedByServer = false;
+      activeSocket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(String(event.data));
+          if (
+            data.type === "credentials" &&
+            typeof data.room === "string" &&
+            typeof data.token === "string"
+          ) {
+            sessionStorage.setItem(
+              ONLINE_SESSION_KEY,
+              JSON.stringify({ room: data.room, token: data.token }),
+            );
+          } else if (data.type === "peer-disconnected") {
+            peerConnected = false;
+            updateConnection(false);
+            setMessage("Waiting for the other player to reconnect.");
+          } else if (data.type === "peer-reconnected") {
+            peerConnected = true;
+            setMessage("");
+          } else if (
+            data.type === "chat" &&
+            typeof data.id === "string" &&
+            typeof data.text === "string" &&
+            (data.seat === 0 || data.seat === 1)
+          ) {
+            setChat((previous) =>
+              previous.some((entry) => entry.id === data.id)
+                ? previous
+                : [
+                    ...previous,
+                    {
+                      id: data.id,
+                      player: onlineChatPlayerName(
+                        data.seat,
+                        seat,
+                        onlineRef.current?.session.names,
+                      ),
+                      text: data.text,
+                    },
+                  ].slice(-100),
+            );
+          } else if (data.type === "reported" && typeof data.id === "string") {
+            setChat((previous) =>
+              previous.map((entry) =>
+                entry.id === data.id ? { ...entry, flagged: true } : entry,
+              ),
+            );
+          } else if (data.type === "account-linked") {
+            setMessage("Account linked to this game.");
+          } else if (
+            data.type === "chat-result" &&
+            typeof data.requestId === "string"
+          ) {
+            const pending = pendingChats.current.get(data.requestId);
+            if (pending) {
+              clearTimeout(pending.timer);
+              pendingChats.current.delete(data.requestId);
+              if (
+                data.ok === true &&
+                lastChatAttempt.current?.requestId === data.requestId
+              )
+                lastChatAttempt.current = null;
+              pending.resolve(data.ok === true);
+              if (data.ok !== true && typeof data.reason === "string")
+                setMessage(data.reason);
+            }
+          } else if (data.type === "state") {
+            const previous = onlineRef.current;
+            if (!previous) return;
+            const nextSession = data.session as OnlineSession;
+            if (
+              soundRef.current &&
+              nextSession.revision === previous.session.revision + 1
+            ) {
+              const placement = placementSound(
+                previous.session.game,
+                nextSession.game,
+              );
+              if (placement) soundCue(placement);
+              if (
+                previous.session.game.phase !== "end" &&
+                nextSession.game.phase === "end" &&
+                nextSession.game.winner !== null
+              )
+                scheduleSoundCue(
+                  nextSession.game.winner === seat ? "win" : "lose",
+                  placement ? 550 : 0,
+                );
+            }
+            const updated = {
+              ...previous,
+              session: nextSession,
+              connected: peerConnected,
+              pending: false,
+            };
+            onlineRef.current = updated;
+            setOnline(updated);
+            gameRef.current = updated.session.game;
+            setGame(updated.session.game);
+            retryUntil = 0;
+            if (peerConnected) setMessage("");
+            setClock(Date.now());
+            setTarget(null);
+            if (typeof data.activity === "string")
+              setActivity((previous) =>
+                [...previous, data.activity].slice(-100),
+              );
+            if (Array.isArray(data.dice) && data.dice.length === 2) {
+              setDiceFaces([data.dice[0], data.dice[1]]);
+              setDiceAnimation((n) => n + 1);
+              showRollEffect(data.dice[0] + data.dice[1]);
+              if (soundRef.current) soundCue("roll");
+            }
+          } else if (data.type === "error") {
+            pendingOnlineExit.current = null;
+            setMessage(String(data.reason));
+            if (onlineRef.current) {
+              onlineRef.current = { ...onlineRef.current, pending: false };
+              setOnline(onlineRef.current);
+            }
+          } else if (data.type === "closed") {
+            closedByServer = true;
+            const destination = pendingOnlineExit.current;
+            pendingOnlineExit.current = null;
+            if (destination && data.recoverable !== true) {
+              finishOnlineExit(destination === "match");
+              return;
+            }
+            if (data.recoverable !== true)
+              sessionStorage.removeItem(ONLINE_SESSION_KEY);
+            if (isOpponentDeparture(data.code, data.recoverable))
+              setOpponentLeft(true);
+            updateConnection(false);
+            if (onlineRef.current) {
+              onlineRef.current = {
+                ...onlineRef.current,
+                recoverable: data.recoverable === true,
+              };
+              setOnline(onlineRef.current);
+            }
+            setMessage(String(data.reason));
           }
-        } else if (data.type === "error") {
-          setMessage(String(data.reason));
-          setOnline((previous) =>
-            previous ? { ...previous, pending: false } : null,
+        } catch {
+          setMessage("The multiplayer server sent an invalid response.");
+        }
+      };
+      activeSocket.onclose = () => {
+        if (onlineSocket.current !== activeSocket || !onlineRef.current) return;
+        for (const pending of pendingChats.current.values()) {
+          clearTimeout(pending.timer);
+          pending.resolve(false);
+        }
+        pendingChats.current.clear();
+        pendingOnlineExit.current = null;
+        updateConnection(false);
+        if (closedByServer || !onlineCredentials()) return;
+        retryUntil ||= Date.now() + 55000;
+        if (Date.now() >= retryUntil) {
+          onlineRef.current = { ...onlineRef.current, recoverable: true };
+          setOnline(onlineRef.current);
+          setMessage(
+            "The connection could not be restored. Resume the game to try again.",
           );
-          if (onlineRef.current)
-            onlineRef.current = { ...onlineRef.current, pending: false };
-        } else if (data.type === "closed") setMessage(String(data.reason));
-      } catch {
-        setMessage("The multiplayer server sent an invalid response.");
-      }
+          return;
+        }
+        setMessage("Connection lost. Reconnecting...");
+        onlineRetry.current = setTimeout(() => {
+          if (!onlineRef.current) return;
+          const credentials = onlineCredentials();
+          if (!credentials) return;
+          const next = new WebSocket(activeSocket.url);
+          bind(next);
+          next.onopen = () =>
+            next.send(JSON.stringify({ type: "resume", ...credentials }));
+        }, 1500);
+      };
+      activeSocket.onerror = () => activeSocket.close();
     };
-    socket.onclose = () => {
-      setMessage(
-        "The multiplayer connection closed. Return to the start screen to play again.",
-      );
-      setOnline((previous) =>
-        previous ? { ...previous, connected: false, pending: false } : null,
-      );
-      if (onlineRef.current)
-        onlineRef.current = {
-          ...onlineRef.current,
-          connected: false,
-          pending: false,
-        };
-    };
-    socket.onerror = () => setMessage("The multiplayer connection failed.");
+    bind(socket);
   }
   useEffect(() => {
     document.documentElement.dataset.theme = initialTheme(
@@ -370,8 +733,9 @@ export default function Forge({
     localStorage.setItem("hexari-forge-activity", JSON.stringify(activity));
   }, [activity]);
   useEffect(() => {
-    localStorage.setItem("hexari-forge-chat", JSON.stringify(chat));
-  }, [chat]);
+    if (opponent !== "online")
+      localStorage.setItem("hexari-forge-chat", JSON.stringify(chat));
+  }, [chat, opponent]);
   useEffect(() => {
     if (started || !sound) return;
     const player = welcomeMusicRef.current ?? startWelcomeMusic();
@@ -381,6 +745,23 @@ export default function Forge({
       if (welcomeMusicRef.current === player) welcomeMusicRef.current = null;
     };
   }, [started, sound]);
+  useEffect(() => {
+    if (
+      !started ||
+      !sound ||
+      game.phase !== "end" ||
+      game.winner === null ||
+      resultDismissed
+    )
+      return;
+    const player = startResultMusic();
+    return () => player.stop();
+  }, [started, sound, game.phase, game.winner, resultDismissed]);
+  // Attempt playback inside the leave interaction before React paints the welcome screen.
+  function startWelcomeOnReturn() {
+    if (sound && !welcomeMusicRef.current)
+      welcomeMusicRef.current = startWelcomeMusic();
+  }
   function log(entry: string) {
     setActivity((previous) => [...previous, entry].slice(-100));
   }
@@ -388,11 +769,12 @@ export default function Forge({
     if (sound) stopSoundEffects();
     setSound(!sound);
   }
-  function startNewGame(now = Date.now()) {
+  function startNewGame(now = eventTime()) {
+    clearLocalForgeCoachHistory();
     if (rollEffectTimer.current) clearTimeout(rollEffectTimer.current);
     setRollEffect(null);
     setResultDismissed(false);
-    const fresh = newGame(now);
+    const fresh = newGame(now, { manualSetup: true });
     gameRef.current = fresh;
     setGame(fresh);
     setClock(now);
@@ -401,6 +783,7 @@ export default function Forge({
     setBuildSelection(null);
     setActivity([]);
     setChat([]);
+    setCoachGeneration((generation) => generation + 1);
     setMessage("");
   }
   const isBotTurn =
@@ -415,6 +798,16 @@ export default function Forge({
       : opponent === "bot"
         ? 0
         : game.turn;
+  const displayName = account.name ?? guestNickname;
+  const playerNames: [string, string] =
+    opponent === "hotseat"
+      ? ["Player 1", "Player 2"]
+      : opponent === "bot"
+        ? [displayName, botNickname]
+        : (online?.session.names ??
+          (online?.seat === 1
+            ? ["Opponent", displayName]
+            : [displayName, "Opponent"]));
   const buildAvailability = useMemo(
     () =>
       buildKinds.map((building) => ({
@@ -447,40 +840,37 @@ export default function Forge({
         showRollEffect(first + second);
         if (sound) soundCue("roll");
       }
-      setMessage(`Bot: ${result.actions.join(". ")}.`);
+      setMessage(`${botNickname} (Bot): ${result.actions.join(". ")}.`);
       setActivity((previous) =>
         [
           ...previous,
-          ...result.actions.map((action) => `Bot: ${action}`),
+          ...result.actions.map((action) => `${botNickname} (Bot): ${action}`),
         ].slice(-100),
       );
-      if (sound && result.game.phase === "end") playBotCue("lose");
+      const placement = placementSound(game, result.game);
+      if (sound && placement) playBotCue(placement);
+      if (sound && result.game.phase === "end")
+        scheduleSoundCue(
+          result.game.winner === 0 ? "win" : "lose",
+          (game.phase === "roll" ? 500 : 0) + (placement ? 550 : 0),
+        );
       else if (
         sound &&
-        result.actions.some((action) => action.startsWith("Upgraded"))
-      )
-        playBotCue("city");
-      else if (
-        sound &&
-        result.actions.some((action) => action.startsWith("Built at"))
-      )
-        playBotCue("settlement");
-      else if (
-        sound &&
-        result.actions.some((action) => action.startsWith("Built a road"))
-      )
-        playBotCue("road");
-      else if (
-        sound &&
+        !placement &&
         result.actions.some((action) => action.startsWith("Traded"))
       )
         playBotCue("trade");
       setGame(result.game);
     }, 800);
     return () => clearTimeout(timer);
-  }, [started, isBotTurn, game, sound, pausedAt, showRollEffect]);
+  }, [started, isBotTurn, game, sound, pausedAt, showRollEffect, botNickname]);
   useEffect(() => {
-    if (!started || pausedAt !== null) return;
+    if (
+      !started ||
+      pausedAt !== null ||
+      (opponent === "online" && !online?.connected)
+    )
+      return;
     const t = setInterval(() => {
       const now = Date.now();
       setClock(now);
@@ -508,20 +898,39 @@ export default function Forge({
             current.turn === 0 &&
             current.phase === "roll"
               ? "Waiting for the first roll."
-              : `Player ${current.turn + 1} ran out of time.`,
+              : `${opponent === "hotseat" ? `Player ${current.turn + 1}` : current.turn === 0 ? displayName : botNickname} ran out of time.`,
           ].slice(-100),
         );
         setGame(next);
       }
     }, 1000);
     return () => clearInterval(t);
-  }, [started, sound, pausedAt, opponent]);
+  }, [
+    started,
+    sound,
+    pausedAt,
+    opponent,
+    online?.connected,
+    displayName,
+    botNickname,
+  ]);
   const left = Math.min(
     120,
     Math.max(0, 120 - Math.floor((clock - game.turnStarted) / 1000)),
   );
-  function choose(id: number, to?: number) {
+  function choose(id: number, to?: number, trigger?: SVGElement) {
     if (botTurn) return;
+    if (game.phase === "setup") {
+      if (to !== undefined || !legalSetupSettlement(game, id)) {
+        if (sound) soundCue("blocked");
+        setMessage("Choose a highlighted starting corner.");
+        return;
+      }
+      if (sound) soundCue("select");
+      buildTrigger.current = trigger ?? null;
+      setTarget({ at: id });
+      return;
+    }
     if (game.phase !== "build") {
       if (sound) soundCue("error");
       setMessage("Roll before building.");
@@ -547,19 +956,33 @@ export default function Forge({
       }
     }
     if (sound) soundCue("select");
+    buildTrigger.current = trigger ?? null;
     setTarget({ at: id, to });
+  }
+  function closeBuildPopover(restoreFocus = true) {
+    setTarget(null);
+    if (restoreFocus && buildTrigger.current?.isConnected)
+      buildTrigger.current.focus();
+    buildTrigger.current = null;
   }
   function build(
     building: import("./engine").Building,
     at: number,
     to?: number,
   ) {
-    if (botTurn || game.phase !== "build") return;
+    if (botTurn || (game.phase !== "build" && game.phase !== "setup")) return;
+    if (
+      game.phase === "setup" &&
+      (building !== "settlement" ||
+        to !== undefined ||
+        !legalSetupSettlement(game, at))
+    )
+      return;
     if (opponent === "online") {
       onlineCommand({ type: "build", building, at, to });
       return;
     }
-    const now = Date.now();
+    const now = eventTime();
     const next = transition(game, { type: "build", building, at, to, now });
     if (next === game) {
       const legal =
@@ -575,20 +998,27 @@ export default function Forge({
         "That build is not legal or you do not have the required resources.",
       );
     } else {
-      if (sound)
-        soundCue(
-          next.phase === "end"
-            ? "win"
-            : building === "market" || building === "farm"
-              ? "settlement"
-              : building,
+      if (sound) {
+        soundCue(building);
+        if (next.phase === "end") scheduleSoundCue("win", 550);
+      }
+      if (game.phase === "setup") {
+        log(
+          `${playerNames[game.turn]} placed a starting settlement at corner ${at + 1}.`,
         );
-      log(
-        `Player ${game.turn + 1} built a ${building}${building === "road" ? "" : ` at corner ${at + 1}`}.`,
-      );
-      setMessage(
-        `${building[0].toUpperCase() + building.slice(1)} built. Turn complete.`,
-      );
+        setMessage(
+          next.phase === "setup"
+            ? "Choose a starting corner."
+            : "Roll to begin your turn.",
+        );
+      } else {
+        log(
+          `${playerNames[game.turn]} built a ${building}${building === "road" ? "" : ` at corner ${at + 1}`}.`,
+        );
+        setMessage(
+          `${building[0].toUpperCase() + building.slice(1)} built. Turn complete.`,
+        );
+      }
     }
     gameRef.current = next;
     setClock(now);
@@ -600,12 +1030,12 @@ export default function Forge({
       onlineCommand({ type: "bank", give, receive });
       return;
     }
-    const rate = (game.players[game.turn].markets?.length ?? 0) > 0 ? 3 : 4;
+    const rate = 4;
     const next = transition(game, { type: "bank", give, receive });
     if (next === game) return;
     setGame(next);
     setMessage(`Traded ${rate} ${give} for one ${receive}.`);
-    log(`Player ${game.turn + 1} traded ${rate} ${give} for 1 ${receive}.`);
+    log(`${playerNames[game.turn]} traded ${rate} ${give} for 1 ${receive}.`);
     if (sound) soundCue("bank");
   }
   function tradeWithPlayer(give: Goods, receive: Goods) {
@@ -614,7 +1044,7 @@ export default function Forge({
     setGame(next);
     setMessage(`Traded one ${give} for one ${receive}.`);
     log(
-      `Player ${game.turn + 1} traded 1 ${give} for 1 ${receive} with ${opponent === "bot" ? "the bot" : `Player ${2 - game.turn}`}.`,
+      `${playerNames[game.turn]} traded 1 ${give} for 1 ${receive} with ${playerNames[1 - game.turn]}.`,
     );
     if (sound) soundCue("trade");
     return true;
@@ -622,7 +1052,7 @@ export default function Forge({
   function enterGame(resume: boolean) {
     welcomeMusicRef.current?.stop();
     welcomeMusicRef.current = null;
-    const now = Date.now();
+    const now = eventTime();
     if (sound) soundCue("start");
     if (resume) {
       const resumed = { ...game, turnStarted: now };
@@ -654,7 +1084,7 @@ export default function Forge({
     }
     if (pauseActive.current) return;
     pauseActive.current = true;
-    const now = Date.now();
+    const now = eventTime();
     setClock(now);
     setPausedAt(now);
     setTarget(null);
@@ -666,7 +1096,7 @@ export default function Forge({
   }
   function resumeGame() {
     if (pausedAt === null) return;
-    const now = Date.now();
+    const now = eventTime();
     const resumed = {
       ...gameRef.current,
       turnStarted: gameRef.current.turnStarted + now - pausedAt,
@@ -678,17 +1108,57 @@ export default function Forge({
     setPausedAt(null);
     log("Game resumed.");
   }
+  function finishOnlineExit(findNew: boolean, keepCredentials = false) {
+    setOpponentLeft(false);
+    for (const pending of pendingChats.current.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+    }
+    pendingChats.current.clear();
+    pendingOnlineExit.current = null;
+    if (onlineRetry.current) clearTimeout(onlineRetry.current);
+    if (onlineSocket.current) onlineSocket.current.onclose = null;
+    onlineSocket.current?.close();
+    onlineSocket.current = null;
+    onlineRef.current = null;
+    if (!keepCredentials) sessionStorage.removeItem(ONLINE_SESSION_KEY);
+    if (!keepCredentials) lastChatAttempt.current = null;
+    setOnline(null);
+    setChat([]);
+    setOpponent("bot");
+    setStarted(false);
+    setPausedAt(null);
+    setMenuOpen(false);
+    setOnlineLobby(findNew);
+    stopSoundEffects();
+    startWelcomeOnReturn();
+  }
+  function requestOnlineExit(findNew: boolean) {
+    const socket = onlineSocket.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      if (onlineCredentials()) {
+        setMessage("Resume the online game before leaving it.");
+      } else finishOnlineExit(findNew);
+      return;
+    }
+    pendingOnlineExit.current = findNew ? "match" : "welcome";
+    try {
+      socket.send(JSON.stringify({ type: "leave" }));
+      if (onlineRef.current) {
+        onlineRef.current = { ...onlineRef.current, pending: true };
+        setOnline(onlineRef.current);
+      }
+      setMessage("Leaving game...");
+    } catch {
+      pendingOnlineExit.current = null;
+      setMessage(
+        "The online connection is unavailable. Resume the game before leaving it.",
+      );
+    }
+  }
   function leaveGame() {
     if (opponent === "online") {
-      if (onlineSocket.current) onlineSocket.current.onclose = null;
-      onlineSocket.current?.close();
-      onlineSocket.current = null;
-      onlineRef.current = null;
-      setOnline(null);
-      setOpponent("bot");
-      setStarted(false);
-      setPausedAt(null);
-      stopSoundEffects();
+      requestOnlineExit(false);
       return;
     }
     const current = gameRef.current;
@@ -704,6 +1174,7 @@ export default function Forge({
     setPausedAt(null);
     setStarted(false);
     stopSoundEffects();
+    startWelcomeOnReturn();
   }
   function rollDice() {
     if (game.phase !== "roll" || botTurn || pausedAt !== null) return;
@@ -711,26 +1182,32 @@ export default function Forge({
       onlineCommand({ type: "roll" });
       return;
     }
-    const first = Math.floor(Math.random() * 6) + 1,
-      second = Math.floor(Math.random() * 6) + 1;
+    const first = eventDie(),
+      second = eventDie();
     setDiceFaces([first, second]);
     setDiceAnimation((n) => n + 1);
     showRollEffect(first + second);
     if (sound) soundCue("roll");
-    log(`Player ${game.turn + 1} rolled ${first + second}.`);
+    log(`${playerNames[game.turn]} rolled ${first + second}.`);
+    if (first + second === 7) {
+      setMessage(
+        "Supply bonus: each player with room receives a least-held resource.",
+      );
+      log("A 7 grants each player with room a least-held resource.");
+    } else setMessage("");
     const next = transition(game, { type: "roll", total: first + second });
     gameRef.current = next;
     setGame(next);
   }
   function endTurn() {
-    if (game.phase === "end" || botTurn || pausedAt !== null) return;
+    if (game.phase !== "build" || botTurn || pausedAt !== null) return;
     if (opponent === "online") {
       onlineCommand({ type: "endTurn" });
       return;
     }
-    log(`Player ${game.turn + 1} ended their turn.`);
+    log(`${playerNames[game.turn]} ended their turn.`);
     if (sound) soundCue("turn");
-    const next = transition(game, { type: "endTurn", now: Date.now() });
+    const next = transition(game, { type: "endTurn", now: eventTime() });
     gameRef.current = next;
     setGame(next);
     setTarget(null);
@@ -803,6 +1280,7 @@ export default function Forge({
   }, []);
   const confirmation = pendingConfirmation && (
     <ForgeConfirm
+      online={opponent === "online" && pendingConfirmation === "restart"}
       changingOpponent={
         pendingConfirmation === "bot" || pendingConfirmation === "hotseat"
       }
@@ -813,6 +1291,8 @@ export default function Forge({
         if (action === "welcome-bot" || action === "welcome-hotseat") {
           setOpponent(action === "welcome-bot" ? "bot" : "hotseat");
           enterGame(false);
+        } else if (action === "restart" && opponent === "online") {
+          requestOnlineExit(true);
         } else {
           if (action === "bot" || action === "hotseat") setOpponent(action);
           startNewGame();
@@ -829,9 +1309,30 @@ export default function Forge({
           <ForgeOnlineLobby
             onClose={() => setOnlineLobby(false)}
             onReady={enterOnline}
+            onAccount={() => {
+              returnToOnline.current = true;
+              setOnlineLobby(false);
+              setOpenAccount(true);
+              setSettingsOpen(true);
+            }}
           />
         )}
         {confirmation}
+        {settingsOpen && (
+          <ForgeSettings
+            initialPage={accountCallback || openAccount ? "Account" : undefined}
+            timerRunning={false}
+            sound={sound}
+            onSound={toggleSound}
+            volume={volume}
+            onVolume={setVolume}
+            fontSize={fontSize}
+            onFontSize={setFontSize}
+            shortcuts={shortcuts}
+            onShortcuts={setShortcuts}
+            onClose={closeSettings}
+          />
+        )}
         {modeDialogOpen && (
           <ForgeModeDialog
             hasSavedGame={hasSavedGame}
@@ -888,7 +1389,10 @@ export default function Forge({
     );
   }
   return (
-    <div className="forge-page" style={{ zoom: tableScale }}>
+    <div
+      className={`forge-page${opponent === "online" ? " forge-online" : ""}`}
+      style={{ zoom: tableScale }}
+    >
       {rollEffect &&
         createPortal(
           <div
@@ -916,6 +1420,14 @@ export default function Forge({
           document.body,
         )}
       {confirmation}
+      {opponentLeft &&
+        createPortal(
+          <ForgeOpponentLeftNotice
+            onReturn={() => finishOnlineExit(false)}
+            onFindGame={() => finishOnlineExit(true)}
+          />,
+          document.body,
+        )}
       {pausedAt !== null && (
         <ForgePause
           onResume={resumeGame}
@@ -927,11 +1439,11 @@ export default function Forge({
         <ForgeResult
           game={game}
           bot={opponent === "bot"}
+          names={playerNames}
           onViewBoard={() => setResultDismissed(true)}
           onPlayAgain={() => {
             if (opponent === "online") {
-              leaveGame();
-              setOnlineLobby(true);
+              requestOnlineExit(true);
               return;
             }
             startNewGame();
@@ -941,6 +1453,7 @@ export default function Forge({
       )}
       {settingsOpen && (
         <ForgeSettings
+          initialPage={accountCallback || openAccount ? "Account" : undefined}
           sound={sound}
           onSound={toggleSound}
           volume={volume}
@@ -949,9 +1462,27 @@ export default function Forge({
           onFontSize={setFontSize}
           shortcuts={shortcuts}
           onShortcuts={setShortcuts}
-          onClose={() => setSettingsOpen(false)}
+          onClose={closeSettings}
         />
       )}
+      <button
+        type="button"
+        className="forge-player-profile"
+        aria-label={`${account.signedIn ? "Open account" : "Sign in or create account"}${opponent === "hotseat" ? "" : `, ${playerNames[handPlayer]}`}`}
+        onClick={() => {
+          setOpenAccount(true);
+          setSettingsOpen(true);
+        }}
+      >
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="8" r="3.5" />
+          <path d="M5 20v-1a7 7 0 0 1 14 0v1H5Z" />
+        </svg>
+        <span>
+          {opponent !== "hotseat" && <strong>{playerNames[handPlayer]}</strong>}
+          <small>{account.signedIn ? "Account" : "Sign in"}</small>
+        </span>
+      </button>
       <div className="forge-nav">
         <div className="opponent-switch" aria-label="Opponent">
           {opponent !== "online" &&
@@ -1301,11 +1832,13 @@ export default function Forge({
                               role="button"
                               tabIndex={0}
                               aria-label={`Select edge between corners ${v.id + 1} and ${id + 1}`}
-                              onClick={() => choose(v.id, id)}
+                              onClick={(event) =>
+                                choose(v.id, id, event.currentTarget)
+                              }
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
-                                  choose(v.id, id);
+                                  choose(v.id, id, e.currentTarget);
                                 }
                               }}
                             />
@@ -1322,17 +1855,19 @@ export default function Forge({
                     owner >= 0 && game.players[owner].cities.includes(v.id);
                   const available =
                     !botTurn &&
-                    buildAvailability.some(
-                      (option) =>
-                        option.available &&
-                        (!selectedBuilding ||
-                          selectedBuilding === option.building) &&
-                        (option.corners.includes(v.id) ||
-                          (option.building === "road" &&
-                            option.edges.some(
-                              ([a, b]) => a === v.id || b === v.id,
-                            ))),
-                    );
+                    (game.phase === "setup"
+                      ? legalSetupSettlement(game, v.id)
+                      : buildAvailability.some(
+                          (option) =>
+                            option.available &&
+                            (!selectedBuilding ||
+                              selectedBuilding === option.building) &&
+                            (option.corners.includes(v.id) ||
+                              (option.building === "road" &&
+                                option.edges.some(
+                                  ([a, b]) => a === v.id || b === v.id,
+                                ))),
+                        ));
                   return (
                     <g key={v.id}>
                       <circle
@@ -1358,48 +1893,40 @@ export default function Forge({
                         strokeWidth={available ? "3" : "2"}
                         role="button"
                         tabIndex={0}
-                        aria-label={`Corner ${v.id + 1}${owner >= 0 ? `, player ${owner + 1} ${city ? "city" : "settlement"}` : ""}`}
-                        onClick={() => choose(v.id)}
+                        aria-label={`Corner ${v.id + 1}${owner >= 0 ? `, player ${owner + 1} ${city ? "city" : "settlement"}` : game.phase === "setup" && available ? ", available starting location" : ""}`}
+                        onClick={(event) =>
+                          choose(v.id, undefined, event.currentTarget)
+                        }
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            choose(v.id);
+                            choose(v.id, undefined, e.currentTarget);
                           }
                         }}
                       />
                       {owner >= 0 && (
                         <g
                           pointerEvents="none"
-                          transform={`translate(${240 + v.x * 45} ${185 + v.y * 45})`}
+                          transform={`translate(${240 + v.x * 45} ${185 + v.y * 45}) scale(1.3)`}
                         >
                           <BuildingArt city={city} owner={owner} />
-                          {(game.players[owner].farms ?? []).includes(v.id) && (
-                            <text x="10" y="-8" fontSize="9">
-                              🌾
-                            </text>
-                          )}
-                          {(game.players[owner].markets ?? []).includes(
-                            v.id,
-                          ) && (
-                            <text x="10" y="-8" fontSize="9" fill="#fff">
-                              ⚖
-                            </text>
-                          )}
                         </g>
                       )}
                     </g>
                   );
                 })}
               </svg>
-              {target && game.phase === "build" && !botTurn && (
-                <ForgeBuildPopover
-                  game={game}
-                  target={target}
-                  onBuild={build}
-                  onClose={() => setTarget(null)}
-                  selectedBuilding={selectedBuilding}
-                />
-              )}
+              {target &&
+                (game.phase === "build" || game.phase === "setup") &&
+                !botTurn && (
+                  <ForgeBuildPopover
+                    game={game}
+                    target={target}
+                    onBuild={build}
+                    onClose={closeBuildPopover}
+                    selectedBuilding={selectedBuilding}
+                  />
+                )}
             </div>
           </div>
         </div>
@@ -1417,39 +1944,43 @@ export default function Forge({
             )}
             <div className="turn-header">
               <h2>
-                {game.phase === "end"
-                  ? `Player ${(game.winner ?? 0) + 1} wins!`
-                  : botTurn
-                    ? opponent === "online"
-                      ? "Opponent's turn"
-                      : "Bot's turn"
-                    : `Player ${game.turn + 1}`}
+                {turnLabel(
+                  opponent,
+                  handPlayer,
+                  game.phase === "end" ? (game.winner ?? game.turn) : game.turn,
+                  game.phase === "end",
+                )}
               </h2>
               <strong>
                 {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
               </strong>
             </div>
             <p>
-              {game.phase === "roll"
-                ? "Roll to begin your turn."
-                : game.phase === "build"
-                  ? "Build, trade, or end your turn."
-                  : "Start a new game to play again."}
+              {game.phase === "setup"
+                ? botTurn
+                  ? "Waiting for the other player to choose a starting corner."
+                  : "Choose a highlighted corner for your first settlement."
+                : game.phase === "roll"
+                  ? "Roll to begin your turn."
+                  : game.phase === "build"
+                    ? "Build, trade, or end your turn."
+                    : "Start a new game to play again."}
             </p>
             <div className="scoreboard">
-              {game.players.map((p, i) => (
+              {game.players.map((_, i) => (
                 <div key={i}>
-                  <small>
-                    {i === 1 && opponent === "bot"
-                      ? "BOT"
-                      : opponent === "bot"
-                        ? "YOU"
-                        : `PLAYER ${i + 1}`}
+                  <small title={playerNames[i]}>
+                    {playerNames[i]}
+                    {opponent === "bot" && i === 1 ? " · BOT" : ""}
+                    {opponent !== "hotseat" && i === handPlayer ? " · YOU" : ""}
                     {game.phase !== "end" && game.turn === i ? " · TURN" : ""}
                   </small>
                   <strong>
-                    {points(p)} <small>/ 5 VP</small>
+                    {totalPoints(game, i as 0 | 1)} <small>/ 5 VP</small>
                   </strong>
+                  {longestRoadOwner(game) === i && (
+                    <small>Longest road +2</small>
+                  )}
                 </div>
               ))}
             </div>
@@ -1461,8 +1992,18 @@ export default function Forge({
                     {message}
                   </p>
                   <p className="hint">
-                    Select an edge or corner to build. A build ends your turn.
+                    {game.phase === "setup"
+                      ? "Place your first settlement for free."
+                      : "Select an edge or corner to build. A build ends your turn."}
                   </p>
+                  {game.phase === "build" &&
+                    !botTurn &&
+                    !buildAvailability.some((option) => option.available) && (
+                      <p className="hint" role="status">
+                        No build available yet. Trade or end your turn to
+                        collect more resources.
+                      </p>
+                    )}
                   <section
                     className="forge-discard-card"
                     aria-labelledby="forge-discard-heading"
@@ -1497,7 +2038,7 @@ export default function Forge({
                               setGame(next);
                               setMessage(`Discarded one ${resource}.`);
                               log(
-                                `Player ${game.turn + 1} discarded one ${resource}.`,
+                                `${playerNames[game.turn]} discarded one ${resource}.`,
                               );
                               if (sound) soundCue("discard");
                             }
@@ -1514,6 +2055,15 @@ export default function Forge({
                     </div>
                   </section>
                 </fieldset>
+                {opponent === "online" && online?.recoverable && (
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => finishOnlineExit(true, true)}
+                  >
+                    Resume online game
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -1545,13 +2095,33 @@ export default function Forge({
                 onCommand={onlineCommand}
               />
             )}
-            <ForgeCoach game={game} botTurn={botTurn} />
+            <ForgeCoach
+              key={coachGeneration}
+              game={game}
+              botTurn={botTurn}
+              onlineRoom={
+                opponent === "online"
+                  ? (onlineCredentials()?.room ?? "unavailable")
+                  : null
+              }
+            />
             <ForgeActivity
               activity={activity}
               chat={chat}
               setChat={setChat}
               bot={opponent === "bot"}
               player={game.turn + 1}
+              setup={game.phase === "setup"}
+              showChat={opponent === "online"}
+              chatConnected={!!online?.connected}
+              onSendChat={opponent === "online" ? sendOnlineChat : undefined}
+              onReportChat={
+                opponent === "online"
+                  ? (id) => {
+                      sendOnlineEvent({ type: "report", id });
+                    }
+                  : undefined
+              }
               onMessage={() => {
                 if (sound) soundCue("message");
               }}
@@ -1570,9 +2140,11 @@ export default function Forge({
                 className="dice-roll-control"
                 disabled={game.phase !== "roll"}
                 aria-label={
-                  game.phase === "roll"
-                    ? "Roll dice"
-                    : `Dice rolled ${game.dice ?? ""}`
+                  game.phase === "setup"
+                    ? "Place a starting settlement first"
+                    : game.phase === "roll"
+                      ? "Roll dice"
+                      : `Dice rolled ${game.dice ?? ""}`
                 }
                 onClick={rollDice}
               >
@@ -1588,9 +2160,11 @@ export default function Forge({
                   )}
                 </span>
                 <span className="dice-roll-hint">
-                  {game.phase === "roll"
-                    ? "Tap the dice to roll"
-                    : `Rolled ${game.dice}`}
+                  {game.phase === "setup"
+                    ? "Place your settlement"
+                    : game.phase === "roll"
+                      ? "Tap the dice to roll"
+                      : `Rolled ${game.dice}`}
                 </span>
               </button>
               <ForgeBuildCards
@@ -1612,6 +2186,7 @@ export default function Forge({
                 className="forge-end-turn"
                 aria-label="End turn"
                 title="End turn"
+                disabled={game.phase !== "build"}
                 onClick={endTurn}
               >
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
