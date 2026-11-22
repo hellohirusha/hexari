@@ -3,6 +3,24 @@ import { defaultBoard, pips, scoreVertex, vertices } from "../src/shared/board";
 import { rankSettlements } from "../src/hexari/engine/settlements";
 
 describe("settlement optimizer", () => {
+  it("scores eligible corners out of 100 relative to the best legal option", () => {
+    const ranking = rankSettlements(defaultBoard, "balanced", [], 8);
+    const legal = ranking.filter((entry) => entry.eligible);
+    expect(legal[0].scoreOutOf100).toBeCloseTo(100);
+    for (const corner of legal) {
+      expect(corner.scoreOutOf100).not.toBeNull();
+      expect(corner.scoreOutOf100!).toBeGreaterThanOrEqual(0);
+      expect(corner.scoreOutOf100!).toBeLessThanOrEqual(100);
+      expect(corner.scoreOutOf100!).toBeCloseTo(
+        (100 * corner.score) / legal[0].score,
+      );
+    }
+    expect(ranking.filter((entry) => !entry.eligible)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 8, scoreOutOf100: null }),
+      ]),
+    );
+  });
   it("calculates a uniform-board score from independently derived components", () => {
     const board = defaultBoard.map(() => ({
       resource: "wood" as const,
