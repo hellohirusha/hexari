@@ -1,10 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type Game } from "./engine";
-import { forgeCoachState } from "./coachContext";
+import { forgeCoachState, type ForgeCoachMemory } from "./coachContext";
 import ForgeMessageDialog from "./ForgeMessageDialog";
 import { requestCoach } from "../shared/coachClient";
 import CoachAdvice from "../shared/CoachAdvice";
-import { useRef } from "react";
 
 const questions = [
   "What should I build?",
@@ -12,12 +11,73 @@ const questions = [
   "What is my winning line?",
 ] as const;
 const questionLabels = ["Build", "Catch up", "Win"] as const;
+type CoachHistory = [ForgeCoachMemory[], ForgeCoachMemory[]];
+const historyKey = "forge-coach-history-v1";
+
+export function clearLocalForgeCoachHistory() {
+  try {
+    localStorage.removeItem(historyKey);
+  } catch {
+    // Storage can be unavailable in private browsing.
+  }
+}
+
+function historyStorage(onlineRoom: string | null) {
+  return {
+    storage: onlineRoom ? sessionStorage : localStorage,
+    key: onlineRoom ? `${historyKey}:${onlineRoom}` : historyKey,
+  };
+}
+
+export function readForgeCoachHistory(onlineRoom: string | null): CoachHistory {
+  if (onlineRoom === "unavailable") return [[], []];
+  try {
+    const { storage, key } = historyStorage(onlineRoom);
+    const parsed: unknown = JSON.parse(storage.getItem(key) ?? "null");
+    if (!Array.isArray(parsed) || parsed.length !== 2) return [[], []];
+    const seat = (value: unknown): ForgeCoachMemory[] =>
+      Array.isArray(value)
+        ? value
+            .filter((item): item is ForgeCoachMemory =>
+              Boolean(
+                item &&
+                typeof item.question === "string" &&
+                typeof item.advice === "string",
+              ),
+            )
+            .slice(-3)
+            .map(({ question, advice }) => ({
+              question: question.slice(0, 80),
+              advice: advice.slice(0, 600),
+            }))
+        : [];
+    return [seat(parsed[0]), seat(parsed[1])];
+  } catch {
+    return [[], []];
+  }
+}
+
+export function writeForgeCoachHistory(
+  onlineRoom: string | null,
+  history: CoachHistory,
+) {
+  if (onlineRoom === "unavailable") return;
+  try {
+    const { storage, key } = historyStorage(onlineRoom);
+    storage.setItem(key, JSON.stringify(history));
+  } catch {
+    // Advice remains available for this component's lifetime.
+  }
+}
+
 export default function ForgeCoach({
   game,
   botTurn,
+  onlineRoom = null,
 }: {
   game: Game;
   botTurn: boolean;
+  onlineRoom?: string | null;
 }) {
   const [question, setQuestion] = useState<(typeof questions)[number]>(
     questions[0],
@@ -29,19 +89,27 @@ export default function ForgeCoach({
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const request = useRef<AbortController | null>(null);
+  const history = useRef<CoachHistory>(readForgeCoachHistory(onlineRoom));
+  useEffect(() => () => request.current?.abort(), []);
   async function ask() {
     if (busy || botTurn || game.phase === "end") return;
-    const player = game.turn + 1;
+    const seat = game.turn;
+    const player = seat + 1;
     setBusy(true);
     setResult(null);
     const controller = new AbortController();
     request.current = controller;
     try {
       const advice = await requestCoach(
-        forgeCoachState(game, question),
+        forgeCoachState(game, question, history.current[seat]),
         (answer) => setResult({ player, answer, error: false }),
         controller.signal,
       );
+      history.current[seat] = [
+        ...history.current[seat],
+        { question, advice },
+      ].slice(-3);
+      writeForgeCoachHistory(onlineRoom, history.current);
       setResult({ player, answer: advice, error: false });
     } catch (error) {
       if (controller.signal.aborted) return;
