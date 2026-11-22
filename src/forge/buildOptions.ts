@@ -2,20 +2,13 @@ import { vertices } from "./board";
 import {
   canAfford,
   costs,
-  legalImprovement,
   legalRoad,
   legalSettlement,
   type Building,
   type Game,
 } from "./engine";
 
-export const buildKinds: Building[] = [
-  "road",
-  "settlement",
-  "city",
-  "farm",
-  "market",
-];
+export const buildKinds: Building[] = ["road", "settlement", "city"];
 
 export function buildOptions(game: Game, building: Building) {
   const player = game.players[game.turn];
@@ -33,11 +26,7 @@ export function buildOptions(game: Game, building: Building) {
       ? vertices.filter((v) => legalSettlement(game, v.id)).map((v) => v.id)
       : building === "city"
         ? [...player.settlements]
-        : building === "farm" || building === "market"
-          ? [...player.settlements, ...player.cities].filter((id) =>
-              legalImprovement(game, building, id),
-            )
-          : [];
+        : [];
   return {
     affordable,
     corners,
