@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/coach";
-import { defaultBoard } from "../src/shared/board";
+import { defaultBoard, ports } from "../src/shared/board";
 import { emptyHand } from "../src/forge/engine";
 
 const state = () => ({
@@ -36,11 +36,92 @@ function response() {
   };
   return { res, result };
 }
+beforeEach(() => vi.stubEnv("COACH_MAX_REQUESTS_PER_MINUTE", "1000"));
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 describe("coach endpoint", () => {
+  it("limits repeated requests before contacting a provider", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GROQ_API_KEY", "");
+    vi.stubEnv("COACH_MAX_REQUESTS_PER_MINUTE", "1");
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "Build a road." }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const req = {
+      method: "POST",
+      body: state(),
+      socket: { remoteAddress: "test-rate-limit" },
+    };
+    const first = response();
+    const second = response();
+    await handler(req, first.res);
+    await handler(req, second.res);
+    expect(first.result.code).toBe(200);
+    expect(second.result.code).toBe(429);
+    expect(second.res.setHeader).toHaveBeenCalledWith(
+      "Retry-After",
+      expect.any(String),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("includes valid port layouts in the provider context and rejects invalid ones", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GROQ_API_KEY", "");
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "Use your port." }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const valid = response();
+    await handler({ method: "POST", body: { ...state(), ports } }, valid.res);
+    expect(valid.result.code).toBe(200);
+    expect(JSON.stringify(fetchMock.mock.calls[0])).toContain("ports");
+    expect(JSON.stringify(fetchMock.mock.calls[0])).toContain("vertex");
+    const invalid = response();
+    await handler(
+      { method: "POST", body: { ...state(), ports: [ports[0], ports[0]] } },
+      invalid.res,
+    );
+    expect(invalid.result.code).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("uses the supported Groq default for streaming and non-streaming requests", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GROQ_API_KEY", "backup-key");
+    vi.stubEnv("GROQ_MODEL", "");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({ choices: [{ message: { content: "Build a road." } }] }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          'data: {"choices":[{"delta":{"content":"Build a road."}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const plain = response();
+    await handler({ method: "POST", body: state() }, plain.res);
+    const streamed = response();
+    await handler(
+      { method: "POST", body: { ...state(), stream: true } },
+      streamed.res,
+    );
+    expect(plain.result.code).toBe(200);
+    expect(streamed.result.code).toBe(200);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe(
+      "openai/gpt-oss-120b",
+    );
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).model).toBe(
+      "openai/gpt-oss-120b",
+    );
+  });
   it("streams Gemini advice across fragmented events", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.stubEnv("GROQ_API_KEY", "");
