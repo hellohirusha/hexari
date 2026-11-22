@@ -14,13 +14,15 @@ export function parseResumableGame(raw: string | null): Game | null {
     if (!value || typeof value !== "object") return null;
     const game = value as Game;
     if (
-      (game.phase !== "roll" && game.phase !== "build") ||
+      (game.phase !== "setup" &&
+        game.phase !== "roll" &&
+        game.phase !== "build") ||
       (game.turn !== 0 && game.turn !== 1) ||
       game.winner !== null ||
       !Number.isFinite(game.turnStarted) ||
       !Array.isArray(game.players) ||
       game.players.length !== 2 ||
-      (game.phase === "roll"
+      (game.phase === "roll" || game.phase === "setup"
         ? game.dice !== null
         : !Number.isInteger(game.dice) || game.dice! < 2 || game.dice! > 12)
     )
@@ -59,6 +61,19 @@ export function parseResumableGame(raw: string | null): Game | null {
       )
         return null;
     }
+    if (
+      game.phase === "setup" &&
+      (game.players[0].settlements.length !== (game.turn === 1 ? 1 : 0) ||
+        game.players[1].settlements.length !== 0 ||
+        game.players.some(
+          (player) =>
+            player.cities.length ||
+            player.roads.length ||
+            player.farms?.length ||
+            player.markets?.length,
+        ))
+    )
+      return null;
     const occupied = game.players.flatMap((player) => [
       ...player.settlements,
       ...player.cities,
@@ -101,6 +116,12 @@ export function parseResumableGame(raw: string | null): Game | null {
           player.roads.length === 0
         );
       });
+    if (
+      game.phase === "setup" &&
+      game.turn === 0 &&
+      game.players[0].settlements.length === 0
+    )
+      return null;
     return untouched ? null : { ...game, progressed: true };
   } catch {
     return null;
