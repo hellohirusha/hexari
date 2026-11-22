@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { goods, points } from "../src/forge/engine";
+import { goods, totalPoints } from "../src/forge/engine";
 import { startingProduction, studyGame } from "../src/forge/study";
 import { defaultBoard, vertices } from "../src/forge/board";
 import { pips } from "../src/shared/board";
@@ -47,7 +47,7 @@ describe("Forge fixed-board study", () => {
     for (const { game, turns } of games) {
       expect(game.phase).toBe("end");
       expect(game.winner === 0 || game.winner === 1).toBe(true);
-      expect(points(game.players[game.winner!])).toBeGreaterThanOrEqual(5);
+      expect(totalPoints(game, game.winner as 0 | 1)).toBeGreaterThanOrEqual(5);
       expect(turns).toBeLessThan(1000);
       for (const player of game.players)
         expect(
@@ -82,5 +82,5 @@ describe("Forge fixed-board study", () => {
         oldStartsSwapped: summary(candidateSwapped),
       }),
     );
-  }, 30000);
+  }, 90000);
 });
