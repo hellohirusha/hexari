@@ -8,7 +8,7 @@ export function botAcceptsTrade(game: Game, give: Goods, receive: Goods) {
   return bot.hand[receive] > 0 && bot.hand[give] <= bot.hand[receive];
 }
 
-function TradeCards({
+export function TradeCards({
   label,
   selected,
   disabled,
@@ -73,7 +73,7 @@ export default function ForgeMarket({
     [message, setMessage] = useState(""),
     [bankGive, setBankGive] = useState<Goods | null>(null);
   const hand = game.players[game.turn].hand;
-  const rate = bankRate(game.players[game.turn]);
+  const rate = bankRate();
   const selectedBankGive =
     game.phase === "build" && bankGive && hand[bankGive] >= rate
       ? bankGive
