@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { defaultBoard, vertices } from "../src/forge/board";
-import { buildOptions } from "../src/forge/buildOptions";
+import { vertices } from "../src/forge/board";
+import { buildKinds, buildOptions } from "../src/forge/buildOptions";
 import ForgeBuildCards from "../src/forge/ForgeBuildCards";
 import { newGame, transition } from "../src/forge/engine";
 
@@ -19,22 +19,15 @@ describe("Forge build availability", () => {
     rolled.players[0].hand.brick = 0;
     expect(buildOptions(rolled, "road").available).toBe(false);
   });
-  it("finds settlement, city, farm and market locations using the game rules", () => {
+  it("finds settlement and city locations using the game rules", () => {
     const game = transition(newGame(0), { type: "roll", total: 7 });
     game.players[0].hand = { wood: 3, brick: 1, wheat: 2, ore: 3, sheep: 1 };
-    const wheatCorner = vertices.find((v) =>
-      v.tiles.some((t) => defaultBoard[t].resource === "wheat"),
-    )!;
-    game.players[0].settlements = [wheatCorner.id];
+    const start = game.players[0].settlements[0];
     const firstRoad = buildOptions(game, "road").edges[0];
     game.players[0].roads = [firstRoad];
     expect(buildOptions(game, "settlement").available).toBe(false);
-    expect(buildOptions(game, "city").corners).toContain(wheatCorner.id);
-    expect(buildOptions(game, "farm").corners).toContain(wheatCorner.id);
-    expect(buildOptions(game, "market").corners).toContain(wheatCorner.id);
-    game.players[0].farms = [wheatCorner.id];
-    expect(buildOptions(game, "farm").available).toBe(false);
-    expect(buildOptions(game, "market").available).toBe(false);
+    expect(buildOptions(game, "city").corners).toEqual([start]);
+    expect(buildKinds).toEqual(["road", "settlement", "city"]);
   });
   it("renders accessible cards with truthful availability", () => {
     const game = transition(newGame(0), { type: "roll", total: 7 });
@@ -49,6 +42,8 @@ describe("Forge build availability", () => {
     expect(html).toContain("Road. 1 wood, 1 brick. Choose a location.");
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("Settlement.");
+    expect(html).toContain("City.");
+    expect(html).not.toMatch(/Farm\.|Market\./);
     expect(html).toContain("Not enough resources");
   });
 });
