@@ -308,11 +308,108 @@ export function encodeBoard(board: Tile[]) {
   return btoa(JSON.stringify(board));
 }
 export type BoardConfig = { board: Tile[]; ports: Port[] };
+
+// The compact format stores each tile in one byte and each port in two bytes.
+// The prefix keeps new links distinct from the original Base64 JSON links.
+const compactPrefix = "h2.";
+const compactNumbers: readonly (number | null)[] = [
+  null,
+  2,
+  3,
+  4,
+  5,
+  6,
+  8,
+  9,
+  10,
+  11,
+  12,
+];
+const compactPortResources: Port["resource"][] = [
+  "any",
+  "wood",
+  "brick",
+  "wheat",
+  "ore",
+  "sheep",
+];
 export function encodeBoardConfig(config: BoardConfig) {
-  return btoa(JSON.stringify({ version: 1, ...config }));
+  const tiles = config.board.map((tile) => {
+    const resource = resources.indexOf(tile.resource);
+    const number = compactNumbers.indexOf(tile.number);
+    return resource < 0 || number < 0 ? -1 : (resource << 4) | number;
+  });
+  const encodedPorts = config.ports.map((port) => {
+    const resource = compactPortResources.indexOf(port.resource);
+    const other = port.otherVertex ?? 63;
+    if (
+      resource < 0 ||
+      !Number.isInteger(port.vertex) ||
+      port.vertex < 0 ||
+      port.vertex >= vertices.length ||
+      !Number.isInteger(other) ||
+      (other !== 63 && (other < 0 || other >= vertices.length)) ||
+      port.rate !== (port.resource === "any" ? 3 : 2)
+    )
+      return -1;
+    return (port.vertex << 9) | (other << 3) | resource;
+  });
+  if (
+    tiles.length !== 19 ||
+    tiles.includes(-1) ||
+    encodedPorts.length > vertices.length ||
+    encodedPorts.includes(-1)
+  )
+    return btoa(JSON.stringify({ version: 1, ...config }));
+  const bytes = [
+    2,
+    ...tiles,
+    encodedPorts.length,
+    ...encodedPorts.flatMap((port) => [port >> 8, port & 255]),
+  ];
+  const value = btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return compactPrefix + value;
 }
 export function decodeBoardConfig(value: string): BoardConfig | null {
   try {
+    if (value.startsWith(compactPrefix)) {
+      const encoded = value.slice(compactPrefix.length);
+      if (!/^[A-Za-z0-9_-]+$/.test(encoded) || encoded.length > 172)
+        return null;
+      const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/"));
+      const bytes = Array.from(binary, (char) => char.charCodeAt(0));
+      if (bytes.length < 21 || bytes[0] !== 2 || bytes[20] > vertices.length)
+        return null;
+      if (bytes.length !== 21 + bytes[20] * 2) return null;
+      const board: Tile[] = [];
+      for (const tile of bytes.slice(1, 20)) {
+        const resource = resources[tile >> 4];
+        const number = compactNumbers[tile & 15];
+        if (resource === undefined || number === undefined) return null;
+        board.push({ resource, number });
+      }
+      const compactPorts: Port[] = [];
+      for (let index = 21; index < bytes.length; index += 2) {
+        const entry = (bytes[index] << 8) | bytes[index + 1];
+        const vertex = entry >> 9;
+        const other = (entry >> 3) & 63;
+        const resource = compactPortResources[entry & 7];
+        if (!resource) return null;
+        compactPorts.push({
+          vertex,
+          ...(other === 63 ? {} : { otherVertex: other }),
+          resource,
+          rate: resource === "any" ? 3 : 2,
+        });
+      }
+      // Reuse the legacy validator for coastal edges, duplicate ports and tiles.
+      return decodeBoardConfig(
+        btoa(JSON.stringify({ version: 1, board, ports: compactPorts })),
+      );
+    }
     const parsed: unknown = JSON.parse(atob(value));
     if (Array.isArray(parsed)) {
       const board = decodeBoard(value);
@@ -371,6 +468,8 @@ export function decodeBoardConfig(value: string): BoardConfig | null {
 }
 export function decodeBoard(value: string): Tile[] | null {
   try {
+    if (value.startsWith(compactPrefix))
+      return decodeBoardConfig(value)?.board ?? null;
     const x: unknown = JSON.parse(atob(value));
     if (x && !Array.isArray(x) && typeof x === "object")
       return decodeBoardConfig(value)?.board ?? null;

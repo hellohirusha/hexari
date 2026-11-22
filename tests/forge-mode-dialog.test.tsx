@@ -28,6 +28,7 @@ describe("Forge game selection", () => {
       />,
     );
     expect(html).toContain("Resume game");
+    expect(html).toContain("Start new game");
     expect(html).not.toContain("Play with bot");
     expect(html).not.toContain("Local 1 vs. 1");
     expect(html).toContain("Online 1 vs. 1");

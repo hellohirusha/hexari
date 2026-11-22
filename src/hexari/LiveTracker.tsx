@@ -6,10 +6,20 @@ import {
   recordLiveEvent,
   parseCorners,
   startSession,
+  trackedPosition,
   type LiveSession,
+  type TrackedPosition,
 } from "./engine/liveTracker";
 import type { TrackedPlayer } from "./engine/session";
-import { decodeBoard, encodeBoard, pips, type Tile } from "../shared/board";
+import {
+  decodeBoard,
+  decodeBoardConfig,
+  encodeBoard,
+  encodeBoardConfig,
+  pips,
+  type Port,
+  type Tile,
+} from "../shared/board";
 import { emptyHand, goods, type Goods } from "../shared/resources";
 
 const key = "hexari-live-session-v2";
@@ -36,6 +46,36 @@ function restore(): LiveSession | null {
       session.board !== undefined &&
       (!Array.isArray(session.board) ||
         !decodeBoard(encodeBoard(session.board)))
+    )
+      return null;
+    if (
+      session.robberTile !== undefined &&
+      session.robberTile !== null &&
+      (!Number.isInteger(session.robberTile) ||
+        session.robberTile < 0 ||
+        session.robberTile >= 19)
+    )
+      return null;
+    if (
+      session.firstRollTurn !== undefined &&
+      (!Number.isSafeInteger(session.firstRollTurn) ||
+        session.firstRollTurn < 1 ||
+        session.firstRollTurn > 1000)
+    )
+      return null;
+    if (
+      session.ports !== undefined &&
+      (!session.board ||
+        !Array.isArray(session.ports) ||
+        !decodeBoardConfig(
+          btoa(
+            JSON.stringify({
+              version: 1,
+              board: session.board,
+              ports: session.ports,
+            }),
+          ),
+        ))
     )
       return null;
     if (
@@ -95,14 +135,32 @@ function oldPlayers(): TrackedPlayer[] {
   }
   return defaultPlayers();
 }
-export default function LiveTracker({ board }: { board: Tile[] }) {
+export default function LiveTracker({
+  board,
+  boardPorts,
+  onUsePosition,
+}: {
+  board: Tile[];
+  boardPorts: Port[];
+  onUsePosition: (position: TrackedPosition) => void;
+}) {
   const [session, setSession] = useState<LiveSession | null>(restore);
   const [players, setPlayers] = useState<TrackedPlayer[]>(oldPlayers);
   const [cityInputs, setCityInputs] = useState<string[]>([]);
+  const [firstRollTurn, setFirstRollTurn] = useState(1);
   const [actor, setActor] = useState(0),
     [other, setOther] = useState(1);
   const [kind, setKind] = useState<
-    "build" | "trade" | "bundleTrade" | "bankTrade" | "steal" | "unknownSteal"
+    | "build"
+    | "trade"
+    | "bundleTrade"
+    | "bankTrade"
+    | "steal"
+    | "unknownSteal"
+    | "moveRobber"
+    | "discard"
+    | "monopoly"
+    | "yearOfPlenty"
   >("unknownSteal");
   const [building, setBuilding] = useState<
     "road" | "settlement" | "city" | "development"
@@ -114,6 +172,7 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
   const [bundleGive, setBundleGive] = useState(emptyHand);
   const [bundleReceive, setBundleReceive] = useState(emptyHand);
   const [corner, setCorner] = useState(1);
+  const [robberTile, setRobberTile] = useState(1);
   const [correctedHand, setCorrectedHand] = useState(emptyHand);
   const [message, setMessage] = useState("");
   useEffect(() => {
@@ -122,21 +181,38 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
   }, [session]);
   function record(event: Parameters<typeof recordLiveEvent>[1]) {
     if (!session) return;
-    const next = recordLiveEvent(session, event, board);
+    const next = recordLiveEvent(session, event, board, boardPorts);
     if (!next) {
       setMessage(
-        "This action is impossible with the tracked hands, or exceeds the calculation limit.",
+        "This action is invalid for the tracked hands, ports or bank stock, or exceeds the calculation limit.",
       );
       return;
     }
     setSession(next);
     setMessage("Recorded.");
   }
+  const matchingBoard =
+    !session?.board ||
+    encodeBoardConfig({
+      board: session.board,
+      ports: session.ports ?? boardPorts,
+    }) === encodeBoardConfig({ board, ports: boardPorts });
   if (!session)
     return (
       <>
         <h2>Start a game log</h2>
         <p>Enter starting hands and settlement corners.</p>
+        <label>
+          Turn of the first roll to log
+          <input
+            type="number"
+            min="1"
+            max="1000"
+            step="1"
+            value={firstRollTurn}
+            onChange={(event) => setFirstRollTurn(Number(event.target.value))}
+          />
+        </label>
         <div className="player-grid">
           {players.map((p, i) => (
             <div className="tool-card" key={i}>
@@ -246,13 +322,15 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
                       cities: cities[index]!,
                     })),
                     board,
+                    boardPorts,
+                    firstRollTurn,
                   );
               if (next) {
                 setSession(next);
                 setMessage("");
               } else
                 setMessage(
-                  "Check player names, hands and corner numbers. Buildings cannot share a corner or occupy adjacent corners.",
+                  "Check the turn, player names, hands and corner numbers. Buildings cannot share a corner or occupy adjacent corners.",
                 );
             }}
           >
@@ -266,9 +344,12 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
     <>
       <h2>Game log</h2>
       <p>
-        Hands are estimates based on recorded actions. Unknown steals assume a
-        random card.
+        Hands are estimates based on recorded actions. Steals assume a random
+        card. Bank stock assumes 19 cards of each resource.
       </p>
+      {session.robberTile !== null && session.robberTile !== undefined && (
+        <p className="hint">Robber blocks tile {session.robberTile + 1}.</p>
+      )}
       {session.board && (
         <p className="hint">
           This log uses the board from when tracking started.
@@ -320,28 +401,37 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
               <option value="bundleTrade">Mixed trade</option>
               <option value="bankTrade">Bank trade</option>
               <option value="build">Build</option>
+              <option value="moveRobber">Move robber</option>
+              <option value="discard">Discard cards</option>
+              <option value="monopoly">Monopoly</option>
+              <option value="yearOfPlenty">Year of Plenty</option>
             </InlineChoices>
           </fieldset>
-          <fieldset className="choice-field">
-            <legend>Player</legend>
-            <InlineChoices
-              aria-label="Player"
-              value={actor}
-              onChange={(value) => {
-                const selected = Number(value);
-                setActor(selected);
-                if (selected === other)
-                  setOther((selected + 1) % session.players.length);
-              }}
-            >
-              {session.players.map((p, i) => (
-                <option value={i} key={i}>
-                  {p.name}
-                </option>
-              ))}
-            </InlineChoices>
-          </fieldset>
-          {kind !== "build" && kind !== "bankTrade" && (
+          {kind !== "moveRobber" && (
+            <fieldset className="choice-field">
+              <legend>Player</legend>
+              <InlineChoices
+                aria-label="Player"
+                value={actor}
+                onChange={(value) => {
+                  const selected = Number(value);
+                  setActor(selected);
+                  if (selected === other)
+                    setOther((selected + 1) % session.players.length);
+                }}
+              >
+                {session.players.map((p, i) => (
+                  <option value={i} key={i}>
+                    {p.name}
+                  </option>
+                ))}
+              </InlineChoices>
+            </fieldset>
+          )}
+          {(kind === "steal" ||
+            kind === "unknownSteal" ||
+            kind === "trade" ||
+            kind === "bundleTrade") && (
             <fieldset className="choice-field">
               <legend>Other player</legend>
               <InlineChoices
@@ -386,11 +476,23 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
               )}
             </>
           ) : (
-            (kind === "trade" || kind === "steal") && (
+            (kind === "trade" || kind === "steal" || kind === "monopoly") && (
               <fieldset className="choice-field">
-                <legend>{kind === "trade" ? "Give" : "Stolen resource"}</legend>
+                <legend>
+                  {kind === "trade"
+                    ? "Give"
+                    : kind === "monopoly"
+                      ? "Resource"
+                      : "Stolen resource"}
+                </legend>
                 <InlineChoices
-                  aria-label={kind === "trade" ? "Give" : "Stolen resource"}
+                  aria-label={
+                    kind === "trade"
+                      ? "Give"
+                      : kind === "monopoly"
+                        ? "Resource"
+                        : "Stolen resource"
+                  }
                   value={give}
                   onChange={(value) => setGive(value as Goods)}
                 >
@@ -400,6 +502,19 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
                 </InlineChoices>
               </fieldset>
             )
+          )}
+          {kind === "moveRobber" && (
+            <label>
+              Tile number
+              <input
+                type="number"
+                min="1"
+                max="19"
+                step="1"
+                value={robberTile}
+                onChange={(event) => setRobberTile(Number(event.target.value))}
+              />
+            </label>
           )}
           {kind === "trade" && (
             <>
@@ -439,14 +554,19 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
               </label>
             </>
           )}
-          {(kind === "bundleTrade" || kind === "bankTrade") && (
+          {(kind === "bundleTrade" ||
+            kind === "bankTrade" ||
+            kind === "discard" ||
+            kind === "yearOfPlenty") && (
             <>
               <p>
-                Enter the cards exchanged as observed
                 {kind === "bankTrade"
-                  ? "; bank rates and stock are not checked"
-                  : ""}
-                .
+                  ? "Bank rates use the player's ports and tracked stock."
+                  : kind === "discard"
+                    ? "Enter the observed discarded cards."
+                    : kind === "yearOfPlenty"
+                      ? "Choose two cards from the bank."
+                      : "Enter the cards exchanged as observed."}
               </p>
               {(
                 [
@@ -457,71 +577,87 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
                     set: setBundleReceive,
                   },
                 ] as const
-              ).map((side) => (
-                <fieldset className="choice-field" key={side.label}>
-                  <legend>{side.label}</legend>
-                  <div className="hand">
-                    {goods.map((resource) => (
-                      <label key={resource}>
-                        {resource}
-                        <input
-                          type="number"
-                          min="0"
-                          max="99"
-                          step="1"
-                          aria-label={`${side.label} ${resource} quantity`}
-                          value={side.hand[resource]}
-                          onChange={(event) =>
-                            side.set((previous) => ({
-                              ...previous,
-                              [resource]: Number(event.target.value),
-                            }))
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
-              ))}
+              )
+                .filter(
+                  (side) =>
+                    (kind !== "discard" && kind !== "yearOfPlenty") ||
+                    side.label === "Give",
+                )
+                .map((side) => (
+                  <fieldset className="choice-field" key={side.label}>
+                    <legend>
+                      {kind === "discard"
+                        ? "Discard"
+                        : kind === "yearOfPlenty"
+                          ? "Take"
+                          : side.label}
+                    </legend>
+                    <div className="hand">
+                      {goods.map((resource) => (
+                        <label key={resource}>
+                          {resource}
+                          <input
+                            type="number"
+                            min="0"
+                            max="99"
+                            step="1"
+                            aria-label={`${side.label} ${resource} quantity`}
+                            value={side.hand[resource]}
+                            onChange={(event) =>
+                              side.set((previous) => ({
+                                ...previous,
+                                [resource]: Number(event.target.value),
+                              }))
+                            }
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                ))}
             </>
           )}
         </div>
         <button
           className="button primary"
-          onClick={() =>
-            record(
-              kind === "build"
-                ? {
-                    type: kind,
-                    player: actor,
-                    building,
-                    ...(building === "settlement" || building === "city"
-                      ? { corner: corner - 1 }
-                      : {}),
-                  }
-                : kind === "bundleTrade" || kind === "bankTrade"
-                  ? {
-                      type: "bundleTrade",
-                      player: actor,
-                      other: kind === "bankTrade" ? null : other,
-                      give: bundleGive,
-                      receive: bundleReceive,
-                    }
-                  : kind === "trade"
-                    ? {
-                        type: kind,
-                        player: actor,
-                        other,
-                        give,
-                        receive,
-                        giveCount,
-                        receiveCount,
-                      }
-                    : kind === "steal"
-                      ? { type: kind, player: actor, other, resource: give }
-                      : { type: kind, player: actor, other },
-            )
-          }
+          onClick={() => {
+            if (kind === "moveRobber")
+              record({ type: kind, tile: robberTile - 1 });
+            else if (kind === "build")
+              record({
+                type: kind,
+                player: actor,
+                building,
+                ...(building === "settlement" || building === "city"
+                  ? { corner: corner - 1 }
+                  : {}),
+              });
+            else if (kind === "bundleTrade" || kind === "bankTrade")
+              record({
+                type: "bundleTrade",
+                player: actor,
+                other: kind === "bankTrade" ? null : other,
+                give: bundleGive,
+                receive: bundleReceive,
+              });
+            else if (kind === "trade")
+              record({
+                type: kind,
+                player: actor,
+                other,
+                give,
+                receive,
+                giveCount,
+                receiveCount,
+              });
+            else if (kind === "steal")
+              record({ type: kind, player: actor, other, resource: give });
+            else if (kind === "unknownSteal")
+              record({ type: kind, player: actor, other });
+            else if (kind === "monopoly")
+              record({ type: kind, player: actor, resource: give });
+            else record({ type: kind, player: actor, cards: bundleGive });
+          }}
         >
           Record action
         </button>
@@ -545,9 +681,32 @@ export default function LiveTracker({ board }: { board: Tile[] }) {
                   .join(" · ")}
               </div>
             ))}
+            <button
+              type="button"
+              className="button ghost compact"
+              disabled={!matchingBoard}
+              onClick={() => {
+                const position = trackedPosition(session, i);
+                if (!position) return;
+                onUsePosition(position);
+                setMessage(
+                  position.hand
+                    ? "Position and hand sent to trade and coach."
+                    : "Position sent; hand remains unchanged because it is uncertain.",
+                );
+              }}
+            >
+              Use for trade and coach
+            </button>
           </section>
         ))}
       </div>
+      {!matchingBoard && (
+        <p className="hint">
+          Restore this session's board and ports before using its position in
+          other tools.
+        </p>
+      )}
       <p className="hint">
         {session.worlds.length} possible hand states. Unrecorded actions and
         incorrect starting hands affect estimates.

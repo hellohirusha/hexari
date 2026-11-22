@@ -4,6 +4,7 @@ import handler from "../../api/coach";
 type LocalRequest = AsyncIterable<{ toString(): string }> & {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
+  socket?: { remoteAddress?: string };
 };
 type LocalResponse = {
   statusCode: number;
@@ -31,6 +32,8 @@ export function localCoachPlugin(): Plugin {
         "GEMINI_MODEL",
         "GROQ_API_KEY",
         "GROQ_MODEL",
+        "COACH_MAX_REQUESTS_PER_MINUTE",
+        "COACH_MAX_REQUESTS_PER_HOUR",
       ]) {
         if (env[name] === undefined && values[name]) env[name] = values[name];
       }
@@ -66,7 +69,12 @@ export function localCoachPlugin(): Plugin {
             }
           }
           await handler(
-            { method: req.method, headers: req.headers, body: parsed },
+            {
+              method: req.method,
+              headers: req.headers,
+              socket: req.socket,
+              body: parsed,
+            },
             reply,
           );
         } catch {

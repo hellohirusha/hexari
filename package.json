@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "dev:forge": "vite --config vite.forge.config.ts",
-    "multiplayer": "node --experimental-strip-types server/multiplayer.mjs",
-    "test:multiplayer": "node --test tests/multiplayer-server.e2e.mjs",
+    "multiplayer": "node --env-file-if-exists=.env.local --experimental-strip-types server/multiplayer.mjs",
+    "test:multiplayer": "node --experimental-strip-types --test tests/multiplayer-server.e2e.mjs",
     "build": "tsc --noEmit && vite build",
     "build:forge": "tsc --noEmit && vite build --config vite.forge.config.ts",
     "preview:forge": "vite preview --config vite.forge.config.ts",
@@ -16,6 +16,7 @@
     "format": "prettier --check ."
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
     "pixi.js": "^8.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

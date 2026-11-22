@@ -9,7 +9,7 @@ export default function ForgeLink() {
       rel="noopener noreferrer"
     >
       <BrandMark variant="forge" />
-      <span>Play forge</span>
+      <span>Play Forge</span>
       <span aria-hidden="true">↗</span>
     </a>
   );

@@ -1,13 +1,337 @@
 import { describe, expect, it } from "vitest";
 import { beliefSummary } from "../src/hexari/engine/belief";
-import { defaultBoard, vertices } from "../src/shared/board";
+import { defaultBoard, ports, vertices } from "../src/shared/board";
 import {
   recordLiveEvent,
   startSession,
+  trackedPosition,
 } from "../src/hexari/engine/liveTracker";
 import { emptyHand } from "../src/forge/engine";
+import {
+  evaluateTrade,
+  getBankRates,
+} from "../src/hexari/engine/tradeCalculator";
 
 describe("live tracker uncertainty", () => {
+  it("carries a port trade and player trade into the calculator and city upgrade", () => {
+    const port = ports.find((candidate) => candidate.resource === "wood")!;
+    const start = startSession(
+      [
+        {
+          name: "A",
+          corners: String(port.vertex + 1),
+          hand: { ...emptyHand(), wood: 4, wheat: 1, ore: 2 },
+        },
+        { name: "B", corners: "", hand: { ...emptyHand(), wheat: 1 } },
+      ],
+      defaultBoard,
+      ports,
+    )!;
+    const afterBank = recordLiveEvent(
+      start,
+      {
+        type: "bundleTrade",
+        player: 0,
+        other: null,
+        give: { ...emptyHand(), wood: 2 },
+        receive: { ...emptyHand(), ore: 1 },
+      },
+      defaultBoard,
+    )!;
+    const position = trackedPosition(afterBank, 0)!;
+    const assessment = evaluateTrade({
+      board: defaultBoard,
+      hand: position.hand!,
+      give: { ...emptyHand(), wood: 1 },
+      receive: { ...emptyHand(), wheat: 1 },
+      settlements: [port.vertex],
+      cities: [],
+      goal: "city",
+      bankRates: getBankRates(ports, [port.vertex], 4),
+    });
+    expect(assessment.ready).toBe(true);
+    expect(assessment.bankCanMatch).toBe(false);
+    expect(assessment.deficitBefore).toBe(1);
+    expect(assessment.deficitAfter).toBe(0);
+    const afterPlayer = recordLiveEvent(
+      afterBank,
+      {
+        type: "trade",
+        player: 0,
+        other: 1,
+        give: "wood",
+        receive: "wheat",
+      },
+      defaultBoard,
+    )!;
+    const built = recordLiveEvent(
+      afterPlayer,
+      {
+        type: "build",
+        player: 0,
+        building: "city",
+        corner: port.vertex,
+      },
+      defaultBoard,
+    )!;
+    expect(built.worlds[0].hands[0]).toEqual({ ...emptyHand(), wood: 1 });
+    expect(trackedPosition(built, 0)).toMatchObject({
+      settlements: "",
+      cities: String(port.vertex + 1),
+      hand: { ...emptyHand(), wood: 1 },
+    });
+    expect(start.worlds[0].hands[0]).toMatchObject({
+      wood: 4,
+      wheat: 1,
+      ore: 2,
+    });
+  });
+  it("tracks the starting turn for sessions begun midgame", () => {
+    const players = [
+      { name: "A", corners: "", hand: emptyHand() },
+      { name: "B", corners: "", hand: emptyHand() },
+    ];
+    const session = startSession(players, defaultBoard, [], 12)!;
+    expect(trackedPosition(session, 0)?.turn).toBe(12);
+    const first = recordLiveEvent(
+      session,
+      { type: "roll", number: 7 },
+      defaultBoard,
+    )!;
+    expect(trackedPosition(first, 0)?.turn).toBe(12);
+    const second = recordLiveEvent(
+      first,
+      { type: "roll", number: 7 },
+      defaultBoard,
+    )!;
+    expect(trackedPosition(second, 0)?.turn).toBe(13);
+    expect(startSession(players, defaultBoard, [], 0)).toBeNull();
+    expect(startSession(players, defaultBoard, [], 1.5)).toBeNull();
+    expect(
+      trackedPosition({ ...session, firstRollTurn: undefined }, 0)?.turn,
+    ).toBe(1);
+  });
+  it("weights a known stolen resource by how likely it was in each possible hand", () => {
+    const start = startSession([
+      { name: "A", corners: "", hand: emptyHand() },
+      { name: "B", corners: "", hand: { ...emptyHand(), wood: 2, brick: 1 } },
+    ])!;
+    const uncertain = recordLiveEvent(
+      start,
+      { type: "unknownSteal", player: 0, other: 1 },
+      defaultBoard,
+    )!;
+    const known = recordLiveEvent(
+      uncertain,
+      { type: "steal", player: 0, other: 1, resource: "wood" },
+      defaultBoard,
+    )!;
+    expect(beliefSummary(known.worlds, 0, "wood")).toEqual([
+      { count: 1, probability: 0.5 },
+      { count: 2, probability: 0.5 },
+    ]);
+  });
+  it("shares placements while withholding a hand that remains uncertain", () => {
+    const start = startSession([
+      { name: "A", corners: "1", hand: emptyHand() },
+      { name: "B", corners: "", hand: { ...emptyHand(), wood: 1, ore: 1 } },
+    ])!;
+    expect(trackedPosition(start, 0)).toMatchObject({
+      settlements: "1",
+      hand: emptyHand(),
+      turn: 1,
+    });
+    const stolen = recordLiveEvent(
+      start,
+      { type: "unknownSteal", player: 0, other: 1 },
+      defaultBoard,
+    )!;
+    expect(trackedPosition(stolen, 0)).toMatchObject({
+      settlements: "1",
+      hand: null,
+    });
+    expect(trackedPosition(stolen, 3)).toBeNull();
+  });
+  it("blocks only the selected robber tile until the robber moves", () => {
+    const tile = defaultBoard.findIndex(
+      (t) => t.resource === "wood" && t.number === 6,
+    );
+    const corner = vertices.find((v) => v.tiles.includes(tile))!;
+    const start = startSession(
+      [
+        { name: "A", corners: String(corner.id + 1), hand: emptyHand() },
+        { name: "B", corners: "", hand: emptyHand() },
+      ],
+      defaultBoard,
+    )!;
+    expect(start.robberTile).toBe(
+      defaultBoard.findIndex((t) => t.resource === "desert"),
+    );
+    const moved = recordLiveEvent(
+      start,
+      { type: "moveRobber", tile },
+      defaultBoard,
+    )!;
+    const blocked = recordLiveEvent(
+      moved,
+      { type: "roll", number: 6 },
+      defaultBoard,
+    )!;
+    expect(blocked.worlds[0].hands[0].wood).toBe(0);
+    expect(
+      recordLiveEvent(moved, { type: "moveRobber", tile }, defaultBoard),
+    ).toBeNull();
+    const movedAway = recordLiveEvent(
+      blocked,
+      { type: "moveRobber", tile: start.robberTile! },
+      defaultBoard,
+    )!;
+    const produced = recordLiveEvent(
+      movedAway,
+      { type: "roll", number: 6 },
+      defaultBoard,
+    )!;
+    expect(produced.worlds[0].hands[0].wood).toBe(1);
+  });
+  it("conditions uncertain hands on an observed discard", () => {
+    const start = startSession([
+      { name: "A", corners: "", hand: emptyHand() },
+      { name: "B", corners: "", hand: { ...emptyHand(), wood: 1, ore: 1 } },
+    ])!;
+    const stolen = recordLiveEvent(
+      start,
+      { type: "unknownSteal", player: 0, other: 1 },
+      defaultBoard,
+    )!;
+    const discarded = recordLiveEvent(
+      stolen,
+      { type: "discard", player: 0, cards: { ...emptyHand(), wood: 1 } },
+      defaultBoard,
+    )!;
+    expect(discarded.worlds).toHaveLength(1);
+    expect(discarded.worlds[0].hands[0]).toEqual(emptyHand());
+    expect(discarded.worlds[0].hands[1]).toMatchObject({ ore: 1, wood: 0 });
+    expect(discarded.history[0]).toContain("discarded 1 wood");
+    expect(
+      recordLiveEvent(
+        stolen,
+        { type: "discard", player: 0, cards: { ...emptyHand(), wood: 2 } },
+        defaultBoard,
+      ),
+    ).toBeNull();
+  });
+  it("updates all hands for Monopoly and validates Year of Plenty stock", () => {
+    const start = startSession([
+      { name: "A", corners: "", hand: { ...emptyHand(), brick: 1 } },
+      { name: "B", corners: "", hand: { ...emptyHand(), wood: 3 } },
+    ])!;
+    const monopoly = recordLiveEvent(
+      start,
+      { type: "monopoly", player: 0, resource: "wood" },
+      defaultBoard,
+    )!;
+    expect(monopoly.worlds[0].hands[0].wood).toBe(3);
+    expect(monopoly.worlds[0].hands[1].wood).toBe(0);
+    const plenty = recordLiveEvent(
+      monopoly,
+      { type: "yearOfPlenty", player: 0, cards: { ...emptyHand(), ore: 2 } },
+      defaultBoard,
+    )!;
+    expect(plenty.worlds[0].hands[0].ore).toBe(2);
+    expect(
+      recordLiveEvent(
+        start,
+        { type: "yearOfPlenty", player: 0, cards: { ...emptyHand(), ore: 1 } },
+        defaultBoard,
+      ),
+    ).toBeNull();
+    const exhausted = startSession([
+      { name: "A", corners: "", hand: emptyHand() },
+      { name: "B", corners: "", hand: { ...emptyHand(), ore: 19 } },
+    ])!;
+    expect(
+      recordLiveEvent(
+        exhausted,
+        { type: "yearOfPlenty", player: 0, cards: { ...emptyHand(), ore: 2 } },
+        defaultBoard,
+      ),
+    ).toBeNull();
+  });
+  it("validates bank trade rates, ports and remaining stock", () => {
+    const woodPort = ports.find((port) => port.resource === "wood")!;
+    const event = {
+      type: "bundleTrade" as const,
+      player: 0,
+      other: null,
+      give: { ...emptyHand(), wood: 2 },
+      receive: { ...emptyHand(), ore: 1 },
+    };
+    const player = {
+      name: "A",
+      corners: String(woodPort.vertex + 1),
+      hand: { ...emptyHand(), wood: 2 },
+    };
+    const opponent = { name: "B", corners: "", hand: emptyHand() };
+    const withPort = startSession([player, opponent], defaultBoard, ports)!;
+    expect(recordLiveEvent(withPort, event, defaultBoard)).not.toBeNull();
+    const withoutPort = startSession([player, opponent], defaultBoard, [])!;
+    expect(recordLiveEvent(withoutPort, event, defaultBoard)).toBeNull();
+    const noOre = startSession(
+      [player, { ...opponent, hand: { ...emptyHand(), ore: 19 } }],
+      defaultBoard,
+      ports,
+    )!;
+    expect(recordLiveEvent(noOre, event, defaultBoard)).toBeNull();
+  });
+  it("handles resource shortages for one or multiple recipients", () => {
+    const tile = defaultBoard.findIndex(
+      (t) => t.resource === "wood" && t.number === 6,
+    );
+    const first = vertices.find((v) => v.tiles.includes(tile))!;
+    const second = vertices.find(
+      (v) =>
+        v.tiles.includes(tile) &&
+        v.id !== first.id &&
+        !first.neighbors.includes(v.id),
+    )!;
+    const multiple = startSession(
+      [
+        {
+          name: "A",
+          corners: String(first.id + 1),
+          hand: { ...emptyHand(), wood: 18 },
+        },
+        { name: "B", corners: String(second.id + 1), hand: emptyHand() },
+      ],
+      defaultBoard,
+    )!;
+    const sharedRoll = recordLiveEvent(
+      multiple,
+      { type: "roll", number: 6 },
+      defaultBoard,
+    )!;
+    expect(sharedRoll.worlds[0].hands.map((hand) => hand.wood)).toEqual([
+      18, 0,
+    ]);
+    const one = startSession(
+      [
+        {
+          name: "A",
+          corners: "",
+          cities: [first.id],
+          hand: { ...emptyHand(), wood: 18 },
+        },
+        { name: "B", corners: "", hand: emptyHand() },
+      ],
+      defaultBoard,
+    )!;
+    const singleRoll = recordLiveEvent(
+      one,
+      { type: "roll", number: 6 },
+      defaultBoard,
+    )!;
+    expect(singleRoll.worlds[0].hands[0].wood).toBe(19);
+  });
   it("conditions uncertain hands on a mixed trade and transfers both bundles", () => {
     const start = startSession([
       { name: "A", corners: "", hand: { ...emptyHand(), wood: 1 } },

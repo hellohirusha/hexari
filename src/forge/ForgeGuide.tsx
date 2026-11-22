@@ -95,9 +95,10 @@ export default function ForgeGuide() {
               {topic === 1 && (
                 <>
                   <p>
-                    Choose a bot or share one device with a friend. Each player
-                    starts with one settlement on the fixed board and one of
-                    each resource.
+                    Choose a bot, share a device, or play online. Each player
+                    chooses a highlighted corner for a free first settlement.
+                    Settlements must be separated by at least one edge. Each
+                    player begins with one of each resource.
                   </p>
                   <p>
                     Gold pieces belong to Player 1. Blue pieces belong to Player
@@ -124,7 +125,11 @@ export default function ForgeGuide() {
                       ),
                     )}
                   </div>
-                  <p>A 7 produces nothing in Forge. There is no robber.</p>
+                  <p>
+                    On a 7, each player receives one of their least-held
+                    resources, if their hand has room. Ties use an alternating
+                    resource order. There is no robber.
+                  </p>
                 </>
               )}
               {topic === 3 && (
@@ -147,20 +152,13 @@ export default function ForgeGuide() {
                       <strong>City</strong>
                       <span>2 wheat + 3 ore</span>
                     </div>
-                    <div>
-                      <strong>Farm</strong>
-                      <span>1 wood + 1 brick + 1 wheat</span>
-                    </div>
-                    <div>
-                      <strong>Market</strong>
-                      <span>2 wood + 1 brick + 1 sheep</span>
-                    </div>
                   </div>
                   <p>Upgrade one of your own settlements to build a city.</p>
                   <p>
-                    Add one improvement to a settlement or city. A farm requires
-                    adjacent wheat and adds one wheat on matching rolls. A
-                    market improves bank trades to 3:1.
+                    The longest continuous road of at least five segments earns
+                    two points. The holder keeps the award on a tie. An
+                    opponent's settlement or city interrupts the road. Each
+                    player can build up to 15 roads.
                   </p>
                 </>
               )}
@@ -168,8 +166,8 @@ export default function ForgeGuide() {
                 <>
                   <p>
                     Trade four matching cards for one different resource at the
-                    bank, or three if you have a market. When a trade is
-                    available, choose the resource you want to receive.
+                    bank. When a trade is available, choose the resource you
+                    want to receive.
                   </p>
                   <p>
                     Offer one card for one different card to the other player or
@@ -202,33 +200,31 @@ export default function ForgeGuide() {
                     <summary>Why did a roll give me no resources?</summary>
                     <p>
                       Only matching tiles next to your settlements or cities
-                      produce. A 7 produces nothing, and a full hand cannot
-                      receive more cards.
+                      produce. A 7 grants a least-held resource instead. A full
+                      hand cannot receive more cards.
                     </p>
                   </details>
                   <details>
                     <summary>Why can’t I place a settlement?</summary>
                     <p>
-                      It must connect to your road, occupy an empty corner, and
-                      have no settlement or city on an adjacent corner. You also
-                      need the resources.
+                      Your first settlement is free. Later settlements need a
+                      connected road and resources. All settlements must occupy
+                      an empty corner with no adjacent settlement or city.
                     </p>
                   </details>
                   <details>
                     <summary>Can I play with a friend online?</summary>
                     <p>
-                      Forge currently supports a local bot or two people sharing
-                      one device. Online multiplayer is not available yet.
+                      Play against a bot, share a device, or choose online 1 vs.
+                      1 to find another player. Online play requires a
+                      configured game server.
                     </p>
                   </details>
                   <details>
-                    <summary>
-                      Are there ports, development cards, or longest-road
-                      points?
-                    </summary>
+                    <summary>Are there ports or development cards?</summary>
                     <p>
                       Not in this Forge variant. Victory points come from
-                      settlements and cities.
+                      settlements, cities and the longest road.
                     </p>
                   </details>
                 </div>

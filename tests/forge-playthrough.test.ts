@@ -6,7 +6,7 @@ import {
   legalRoad,
   legalSettlement,
   newGame,
-  points,
+  totalPoints,
   transition,
   type Game,
   type Goods,
@@ -131,7 +131,7 @@ describe("Forge complete game", () => {
       }
       expect(game.phase, JSON.stringify(game.players)).toBe("end");
       expect(game.winner).not.toBeNull();
-      expect(points(game.players[game.winner!])).toBeGreaterThanOrEqual(5);
+      expect(totalPoints(game, game.winner as 0 | 1)).toBeGreaterThanOrEqual(5);
     },
   );
 });

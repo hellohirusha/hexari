@@ -67,6 +67,7 @@ describe("forge transitions", () => {
     let g = transition(newGame(), { type: "roll", total: 7 });
     const start = g.players[0].settlements[0];
     const to = vertices[start].neighbors[0];
+    const before = { ...g.players[0].hand };
     expect(legalRoad(g, start, to)).toBe(true);
     g = transition(g, {
       type: "build",
@@ -76,8 +77,8 @@ describe("forge transitions", () => {
       now: 123,
     });
     expect(g.players[0].roads).toEqual([[start, to]]);
-    expect(g.players[0].hand.wood).toBe(0);
-    expect(g.players[0].hand.brick).toBe(0);
+    expect(g.players[0].hand.wood).toBe(before.wood - 1);
+    expect(g.players[0].hand.brick).toBe(before.brick - 1);
     expect(g.turn).toBe(1);
     expect(g.phase).toBe("roll");
     expect(g.turnStarted).toBe(123);
@@ -122,6 +123,7 @@ describe("forge transitions", () => {
       now: 43,
     });
     expect(city.players[0].cities).toContain(start);
+    expect(city.players[0].settlements).not.toContain(start);
     expect([city.turn, city.phase, city.turnStarted]).toEqual([1, "roll", 43]);
     expect(
       transition(game, { type: "build", building: "city", at: start, now: 44 }),
@@ -152,26 +154,24 @@ describe("forge transitions", () => {
   });
   it("exchanges cards between players without mutating the original hands", () => {
     const g = transition(newGame(), { type: "roll", total: 7 });
+    const [first, second] = g.players.map((player) => ({ ...player.hand }));
     const next = transition(g, {
       type: "playerTrade",
       give: "wood",
       receive: "ore",
     });
     expect(next.players[0].hand).toEqual({
-      wood: 0,
-      brick: 1,
-      wheat: 1,
-      ore: 2,
-      sheep: 1,
+      ...first,
+      wood: first.wood - 1,
+      ore: first.ore + 1,
     });
     expect(next.players[1].hand).toEqual({
-      wood: 2,
-      brick: 1,
-      wheat: 1,
-      ore: 0,
-      sheep: 1,
+      ...second,
+      wood: second.wood + 1,
+      ore: second.ore - 1,
     });
-    expect(g.players[0].hand.wood).toBe(1);
+    expect(g.players[0].hand).toEqual(first);
+    expect(g.players[1].hand).toEqual(second);
   });
   it("rejects impossible, identical, and premature player trades", () => {
     const initial = newGame();

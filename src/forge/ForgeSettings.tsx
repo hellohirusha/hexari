@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import ThemeToggle from "../shared/ThemeToggle";
+import ForgeAccount from "./ForgeAccount";
 
-type Page = "Settings" | "Audio" | "Text size" | "Controls" | "Game info";
+type Page =
+  "Settings" | "Audio" | "Text size" | "Controls" | "Game info" | "Account";
 export default function ForgeSettings({
   sound,
   onSound,
@@ -12,6 +14,8 @@ export default function ForgeSettings({
   shortcuts,
   onShortcuts,
   onClose,
+  initialPage = "Settings",
+  timerRunning = true,
 }: {
   sound: boolean;
   onSound: () => void;
@@ -22,9 +26,11 @@ export default function ForgeSettings({
   shortcuts: boolean;
   onShortcuts: (enabled: boolean) => void;
   onClose: () => void;
+  initialPage?: "Settings" | "Account";
+  timerRunning?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [page, setPage] = useState<Page>("Settings");
+  const [page, setPage] = useState<Page>(initialPage);
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
@@ -74,6 +80,24 @@ export default function ForgeSettings({
             <button type="button" onClick={() => setPage("Game info")}>
               <span aria-hidden="true">ⓘ</span> Game info{" "}
               <span aria-hidden="true">›</span>
+            </button>
+            <button type="button" onClick={() => setPage("Account")}>
+              <span aria-hidden="true">
+                <svg
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M5 20v-1a7 7 0 0 1 14 0v1H5Z" />
+                </svg>
+              </span>{" "}
+              Account <span aria-hidden="true">›</span>
             </button>
           </div>
           <div className="forge-settings-row">
@@ -172,8 +196,8 @@ export default function ForgeSettings({
             successful build ends your turn.
           </p>
           <p>
-            Build a farm beside wheat for an extra wheat on matching rolls, or a
-            market for 3:1 bank trades. Each building can have one improvement.
+            Build roads and settlements, then upgrade your settlements to
+            cities. Bank trades exchange four matching cards for one resource.
           </p>
           <p>
             Play against the bot or share this device with another player. Games
@@ -181,9 +205,12 @@ export default function ForgeSettings({
           </p>
         </div>
       )}
-      <p className="forge-settings-note">
-        The turn timer continues while settings are open.
-      </p>
+      {page === "Account" && <ForgeAccount />}
+      {timerRunning && (
+        <p className="forge-settings-note">
+          The turn timer continues while settings are open.
+        </p>
+      )}
     </dialog>
   );
 }

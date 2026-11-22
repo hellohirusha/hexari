@@ -51,4 +51,53 @@ describe("session events", () => {
       }).error,
     ).toBeTruthy();
   });
+  it("rejects invalid resource and building values without altering hands", () => {
+    const original = players();
+    const invalidSteal = applySessionEvent(original, {
+      type: "steal",
+      player: 0,
+      other: 1,
+      resource: "invalid" as never,
+    });
+    const invalidTrade = applySessionEvent(original, {
+      type: "trade",
+      player: 0,
+      other: 1,
+      give: "wood",
+      receive: "invalid" as never,
+    });
+    const invalidBuild = applySessionEvent(original, {
+      type: "build",
+      player: 0,
+      building: "invalid" as never,
+    });
+    const inheritedBuild = applySessionEvent(original, {
+      type: "build",
+      player: 0,
+      building: "toString" as never,
+    });
+    const invalidPlayer = applySessionEvent(original, {
+      type: "build",
+      player: "0" as never,
+      building: "road",
+    });
+    const invalidOther = applySessionEvent(original, {
+      type: "steal",
+      player: 0,
+      other: "1" as never,
+      resource: "ore",
+    });
+    for (const result of [
+      invalidSteal,
+      invalidTrade,
+      invalidBuild,
+      inheritedBuild,
+      invalidPlayer,
+      invalidOther,
+    ]) {
+      expect(result.error).toBeTruthy();
+      expect(result.players).toBe(original);
+    }
+    expect(original[0].hand).toEqual({ ...emptyHand(), wood: 2, brick: 1 });
+  });
 });

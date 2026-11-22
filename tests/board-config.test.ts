@@ -64,6 +64,37 @@ describe("editable board ports", () => {
       ).port,
     ).toBeNull();
   });
+  it("creates a short URL-safe link and reads both previous formats", () => {
+    const encoded = encodeBoardConfig({ board: defaultBoard, ports });
+    const legacyConfig = btoa(
+      JSON.stringify({ version: 1, board: defaultBoard, ports }),
+    );
+    expect(encoded).toMatch(/^h2\.[A-Za-z0-9_-]+$/);
+    expect(encoded.length).toBeLessThan(100);
+    expect(encoded.length).toBeLessThan(legacyConfig.length / 5);
+    expect(decodeBoardConfig(encoded)).toEqual({ board: defaultBoard, ports });
+    expect(decodeBoard(encoded)).toEqual(defaultBoard);
+    expect(decodeBoardConfig(legacyConfig)).toEqual({
+      board: defaultBoard,
+      ports,
+    });
+    expect(decodeBoardConfig(encodeBoard(defaultBoard))).toEqual({
+      board: defaultBoard,
+      ports,
+    });
+  });
+  it("rejects damaged compact links and preserves incomplete board edits", () => {
+    const edited = defaultBoard.map((tile) => ({ ...tile }));
+    edited[0] = { resource: "ore", number: null };
+    edited[1] = { resource: "desert", number: 12 };
+    const config = { board: edited, ports: [] };
+    const encoded = encodeBoardConfig(config);
+    expect(decodeBoardConfig(encoded)).toEqual(config);
+    expect(decodeBoardConfig(encoded.slice(0, -2))).toBeNull();
+    expect(decodeBoardConfig(`${encoded}!`)).toBeNull();
+    expect(decodeBoardConfig(`h2.${"A".repeat(173)}`)).toBeNull();
+    expect(decodeBoardConfig("h2.AA")).toBeNull();
+  });
   it("rejects duplicate, inland and inconsistent ports", () => {
     const inland = vertices.find((v) => v.tiles.length === 3)!;
     for (const layout of [
@@ -125,16 +156,17 @@ describe("four-seat draft balancing", () => {
       defaultBoard.map((tile) => JSON.stringify(tile)).sort(),
     );
   });
-  it("reports failure if every shuffle leaves the board unchanged", () => {
+  it("can find a new board through local swaps when shuffles repeat the input", () => {
     const result = balanceSeatDraft(defaultBoard, ports, {
       generateNew: true,
       threshold: 10,
       iterations: 3,
       random: () => 0.999999,
     });
-    expect(result.reached).toBe(false);
-    expect(result.tried).toBe(3);
-    expect(result.board).toEqual(defaultBoard);
+    expect(result.reached).toBe(true);
+    expect(result.tried).toBeLessThanOrEqual(3);
+    expect(result.board).not.toEqual(defaultBoard);
+    expect(validateBoard(result.board)).toEqual([]);
   });
   it("keeps all eight placements legal across reproducible balanced searches", () => {
     for (const initialSeed of [11, 42, 117, 501]) {

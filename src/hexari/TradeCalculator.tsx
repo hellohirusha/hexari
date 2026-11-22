@@ -22,6 +22,10 @@ type Props = {
   boardPorts: Port[];
   hand: Hand;
   setHand: Dispatch<SetStateAction<Hand>>;
+  settlementText: string;
+  setSettlementText: Dispatch<SetStateAction<string>>;
+  cityText: string;
+  setCityText: Dispatch<SetStateAction<string>>;
 };
 const goals: { value: TradeGoal; label: string }[] = [
   { value: "balanced", label: "Balanced" },
@@ -36,11 +40,13 @@ export default function TradeCalculator({
   boardPorts,
   hand,
   setHand,
+  settlementText,
+  setSettlementText,
+  cityText,
+  setCityText,
 }: Props) {
   const [give, setGive] = useState<Hand>(emptyHand);
   const [receive, setReceive] = useState<Hand>(emptyHand);
-  const [settlementText, setSettlementText] = useState("");
-  const [cityText, setCityText] = useState("");
   const [goal, setGoal] = useState<TradeGoal>("balanced");
   const pointerDrag = useRef<{
     source: string;
@@ -372,7 +378,7 @@ export default function TradeCalculator({
                 {result.fairRanges
                   .map((range) =>
                     range.min <= range.max
-                      ? `${range.min}-${range.max} ${range.resource}`
+                      ? `${range.min}-${range.max} ${range.resource} (${range.affordable ? `${range.affordable.min}-${range.affordable.max} affordable` : "none affordable"})`
                       : `no whole-card range for ${range.resource}`,
                   )
                   .join("; ")}

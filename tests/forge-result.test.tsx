@@ -26,4 +26,20 @@ describe("Forge game results", () => {
     expect(html).toContain("View board");
     expect(html).toContain("Play again");
   });
+  it("shows the players' nicknames on the result screen", () => {
+    const game = newGame(0);
+    game.phase = "end";
+    game.winner = 1;
+    const html = renderToStaticMarkup(
+      <ForgeResult
+        game={game}
+        bot={false}
+        names={["AmberFox#1234", "SilverWolf#5678"]}
+        onViewBoard={() => {}}
+        onPlayAgain={() => {}}
+      />,
+    );
+    expect(html).toContain("SilverWolf#5678 wins");
+    expect(html).toContain("AmberFox#1234");
+  });
 });

@@ -2,6 +2,7 @@ import {
   pips,
   vertices,
   scoreVertex,
+  swapTiles,
   ports as defaultPorts,
   type Port,
   type Tile,
@@ -159,12 +160,17 @@ export function yieldForRoll(
   board: Tile[],
   settlements: number[],
   roll: number,
+  blockedTile?: number | null,
 ): Hand {
   const result: Hand = { wood: 0, brick: 0, wheat: 0, ore: 0, sheep: 0 };
   for (const id of settlements)
     for (const i of vertices[id]?.tiles ?? []) {
       const tile = board[i];
-      if (tile.number === roll && tile.resource !== "desert")
+      if (
+        i !== blockedTile &&
+        tile.number === roll &&
+        tile.resource !== "desert"
+      )
         result[tile.resource]++;
     }
   return result;
@@ -393,24 +399,29 @@ export function balanceSeatDraft(
   let result = evaluate(best);
   let foundDifferent = false;
   let tried = 0;
-  while (
-    tried < iterations &&
-    (result.gap > threshold || (generateNew && !foundDifferent))
-  ) {
-    const candidate = shuffledBoard(board, random);
-    const next = evaluate(candidate);
+  const consider = (candidate: Tile[]) => {
     const different = candidate.some(
       (tile, index) =>
         tile.resource !== board[index].resource ||
         tile.number !== board[index].number,
     );
-    if (
-      (!generateNew || different) &&
-      (next.gap < result.gap || (generateNew && !foundDifferent))
-    ) {
+    if (generateNew && !different) return;
+    const next = evaluate(candidate);
+    if (next.gap < result.gap || (generateNew && !foundDifferent)) {
       best = candidate;
       result = next;
       foundDifferent = different;
+    }
+  };
+  while (
+    tried < iterations &&
+    (result.gap > threshold || (generateNew && !foundDifferent))
+  ) {
+    consider(shuffledBoard(board, random));
+    if (result.gap > threshold || (generateNew && !foundDifferent)) {
+      const first = tried % board.length;
+      const second = (tried * 7 + 1) % board.length;
+      consider(swapTiles(best, first, second));
     }
     tried++;
   }

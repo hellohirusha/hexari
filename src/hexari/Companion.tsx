@@ -99,6 +99,16 @@ export default function Companion() {
     [coachError, setCoachError] = useState(false),
     [coachHistory, setCoachHistory] = useState<CoachEntry[]>(savedCoachHistory),
     [busy, setBusy] = useState(false);
+  const [settlementText, setSettlementText] = useState("");
+  const [cityText, setCityText] = useState("");
+  const [tradePositionVersion, setTradePositionVersion] = useState(0);
+  const coachBoardKey = encodeBoardConfig({ board, ports: boardPorts });
+  const legacyCoachBoardKey = encodeBoard(board);
+  const defaultPortLayout =
+    JSON.stringify(boardPorts) === JSON.stringify(defaultPorts);
+  const matchesCoachBoard = (entry: CoachEntry) =>
+    entry.board === coachBoardKey ||
+    (defaultPortLayout && entry.board === legacyCoachBoardKey);
   useEffect(() => {
     localStorage.setItem("hexari-coach-v1", JSON.stringify(coachHistory));
   }, [coachHistory]);
@@ -147,6 +157,7 @@ export default function Companion() {
       const advice = await requestCoach(
         {
           board,
+          ports: boardPorts,
           turn,
           vp,
           hand,
@@ -154,7 +165,7 @@ export default function Companion() {
           opponents,
           question,
           history: coachHistory
-            .filter((entry) => entry.board === encodeBoard(board))
+            .filter(matchesCoachBoard)
             .slice(-3)
             .map(({ question, advice }) => ({
               question,
@@ -168,7 +179,7 @@ export default function Companion() {
         [
           ...previous,
           {
-            board: encodeBoard(board),
+            board: coachBoardKey,
             question,
             advice,
           },
@@ -213,7 +224,21 @@ export default function Companion() {
           <section className="panel tools-section" aria-label="Tracker">
             <div className="tool-panel">
               <div className="section-kicker">LIVE TRACKER</div>
-              <LiveTracker board={board} />
+              <LiveTracker
+                board={board}
+                boardPorts={boardPorts}
+                onUsePosition={(position) => {
+                  setSettlementText(position.settlements);
+                  setCityText(position.cities);
+                  if (position.hand) setHand(position.hand);
+                  setTradePositionVersion((version) => version + 1);
+                  setTurn(position.turn);
+                  setBuildings(
+                    `Settlements: ${position.settlements || "none"}; cities: ${position.cities || "none"}`,
+                  );
+                  setOpponents(position.opponents);
+                }}
+              />
             </div>
           </section>
           <section
@@ -221,10 +246,15 @@ export default function Companion() {
             aria-label="Trade calculator"
           >
             <TradeCalculator
+              key={tradePositionVersion}
               board={board}
               boardPorts={boardPorts}
               hand={hand}
               setHand={setHand}
+              settlementText={settlementText}
+              setSettlementText={setSettlementText}
+              cityText={cityText}
+              setCityText={setCityText}
             />
           </section>
           <section className="panel tools-section" aria-label="AI coach">
@@ -324,13 +354,11 @@ export default function Companion() {
                   )}
                 </div>
               )}
-              {coachHistory.some(
-                (entry) => entry.board === encodeBoard(board),
-              ) && (
+              {coachHistory.some(matchesCoachBoard) && (
                 <div className="result-card">
                   <small>RECENT COACHING FOR THIS BOARD</small>
                   {coachHistory
-                    .filter((entry) => entry.board === encodeBoard(board))
+                    .filter(matchesCoachBoard)
                     .slice(-3)
                     .reverse()
                     .map((entry, index) => (
@@ -343,9 +371,7 @@ export default function Companion() {
                     className="button ghost"
                     onClick={() => {
                       setCoachHistory((previous) =>
-                        previous.filter(
-                          (entry) => entry.board !== encodeBoard(board),
-                        ),
+                        previous.filter((entry) => !matchesCoachBoard(entry)),
                       );
                       setAnswer("");
                     }}
@@ -491,10 +517,12 @@ export default function Companion() {
                     {distribution.seed}.
                   </small>
                   <p className="hint">
-                    The model uses draft scores, dice, bank trades, cities and
-                    simplified expansion. It omits the robber, player trades,
-                    development cards, road connectivity and bank shortages.
-                    Each strategy follows fixed priorities.
+                    The model uses draft scores, second-settlement starting
+                    resources, dice, bank trades, cities and simplified
+                    expansion. It omits the robber, player trades, development
+                    cards and road connectivity. It models a finite bank and
+                    production shortages. Each strategy follows fixed
+                    priorities. These 96 races are a small sample.
                   </p>
                 </div>
               ) : (

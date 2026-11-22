@@ -4,9 +4,56 @@ import { regionalOpenings } from "../src/hexari/engine/analysis";
 import {
   simulateStrategyDistribution,
   simulateStrategyRace,
+  startingResources,
+  distributeProduction,
 } from "../src/hexari/engine/strategySimulation";
+import { emptyHand } from "../src/shared/resources";
 
 describe("strategy race model", () => {
+  it("handles shared bank shortages and a single claimant with a partial supply", () => {
+    const board = defaultBoard.map(() => ({
+      resource: "desert" as const,
+      number: null,
+    }));
+    const producingBoard: typeof defaultBoard = board.map((tile) => ({
+      ...tile,
+    }));
+    producingBoard[0] = { resource: "wood", number: 6 };
+    const corners = vertices.filter((vertex) => vertex.tiles.includes(0));
+    const first = {
+      settlements: [],
+      cities: [corners[0].id],
+      hand: emptyHand(),
+    };
+    const second = {
+      settlements: [corners[1].id],
+      cities: [],
+      hand: emptyHand(),
+    };
+    const bank = { wood: 2, brick: 19, wheat: 19, ore: 19, sheep: 19 };
+    distributeProduction(producingBoard, [first, second], bank, 6);
+    expect(first.hand.wood).toBe(0);
+    expect(second.hand.wood).toBe(0);
+    expect(bank.wood).toBe(2);
+    bank.wood = 1;
+    distributeProduction(producingBoard, [first], bank, 6);
+    expect(first.hand.wood).toBe(1);
+    expect(bank.wood).toBe(0);
+  });
+  it("starts with one card from every producing tile at the second settlement", () => {
+    const corner = vertices.find((vertex) => vertex.tiles.length === 3)!;
+    const board = defaultBoard.map((tile) => ({ ...tile }));
+    board[corner.tiles[0]] = { resource: "wood", number: 5 };
+    board[corner.tiles[1]] = { resource: "wood", number: 9 };
+    board[corner.tiles[2]] = { resource: "desert", number: null };
+    expect(startingResources(board, corner.id)).toEqual({
+      wood: 2,
+      brick: 0,
+      wheat: 0,
+      ore: 0,
+      sheep: 0,
+    });
+  });
   it("reproduces outcomes and counts every seat rotation", () => {
     const options = { boards: 3, seed: 42, maxTurns: 400 };
     const first = simulateStrategyDistribution(defaultBoard, ports, options);

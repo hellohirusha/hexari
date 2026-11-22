@@ -1,8 +1,15 @@
 import { defaultBoard, vertices } from "./board";
 import { buildKinds, buildOptions } from "./buildOptions";
-import { costs, points, type Game, type Player } from "./engine";
+import {
+  costs,
+  longestRoadLength,
+  longestRoadOwner,
+  totalPoints,
+  type Game,
+  type Player,
+} from "./engine";
 
-function describePlayer(player: Player) {
+function describePlayer(player: Player, opponent: Player, score: number) {
   const buildings = [
     ...player.settlements.map((corner) => ({ corner, kind: "settlement" })),
     ...player.cities.map((corner) => ({ corner, kind: "city" })),
@@ -14,17 +21,18 @@ function describePlayer(player: Player) {
         number === null ? resource : `${resource} ${number}`,
       )
       .join(", ");
-    const improvement = player.farms?.includes(corner)
-      ? ", farm"
-      : player.markets?.includes(corner)
-        ? ", market"
-        : "";
-    return `${kind} at corner ${corner + 1} (${tiles}${improvement})`;
+    return `${kind} at corner ${corner + 1} (${tiles})`;
   });
-  return `${points(player)} points; ${locations.join("; ") || "no buildings"}; ${player.roads.length} roads`;
+  return `${score} points; ${locations.join("; ") || "no buildings"}; ${player.roads.length} roads, longest continuous road ${longestRoadLength(player, opponent)}`;
 }
 
-export function forgeCoachState(game: Game, question: string) {
+export type ForgeCoachMemory = { question: string; advice: string };
+
+export function forgeCoachState(
+  game: Game,
+  question: string,
+  history: ForgeCoachMemory[] = [],
+) {
   const me = game.players[game.turn];
   const other = game.players[1 - game.turn];
   const handSize = Object.values(me.hand).reduce(
@@ -39,14 +47,25 @@ export function forgeCoachState(game: Game, question: string) {
     const locations = option.edges.length || option.corners.length;
     return `${kind} costs ${cost}; ${option.affordable ? "affordable" : "not affordable"}; ${locations} legal locations`;
   });
+  const phaseInstruction =
+    game.phase === "setup"
+      ? "choose a free starting settlement"
+      : game.phase === "roll"
+        ? "roll before building or trading"
+        : game.phase === "build"
+          ? "dice have been rolled"
+          : "game is over";
   return {
     board: defaultBoard,
     turn: null,
-    vp: points(me),
+    vp: totalPoints(game, game.turn),
     hand: me.hand,
     question,
-    buildings: `Forge: first to 5 points; settlement 1 point, city 2. A successful build ends the turn. Farms add one wheat on matching rolls; markets improve bank trades to 3:1. One improvement per building, maximum one market. No robber, ports, development cards or longest-road points. Hand cap 7; current hand ${handSize} cards, ${Math.max(0, 7 - handSize)} spaces free; excess production is lost. Player trades are one card each and require acceptance. Current phase: ${game.phase}; ${game.phase === "roll" ? "roll before building or trading" : "dice have been rolled"}. Current player: ${describePlayer(me)}. Build options: ${options.join("; ")}. Legal locations are counts, not suggestions; do not invent specific locations.`,
-    opponents: `Visible opponent: ${describePlayer(other)}. Opponent hand is hidden.`,
-    history: [],
+    buildings: `Forge: first to 5 points; settlement 1 point, city 2. Longest continuous road of at least 5 segments awards 2 points; tied incumbent retains it. Current holder: ${longestRoadOwner(game) === null ? "none" : `player ${longestRoadOwner(game)! + 1}`}. A successful build ends the turn. Build roads and settlements, or upgrade your own settlement to a city. Bank trades exchange four matching cards for one different resource. No robber, ports or development cards. On a 7 each player with room receives one of their least-held resources. Hand cap 7; current hand ${handSize} cards, ${Math.max(0, 7 - handSize)} spaces free; excess production is lost. Player trades are one card each and require acceptance. Current phase: ${game.phase}; ${phaseInstruction}. Current player: ${describePlayer(me, other, totalPoints(game, game.turn))}. Build options: ${options.join("; ")}. Legal locations are counts, not suggestions; do not invent specific locations.`,
+    opponents: `Visible opponent: ${describePlayer(other, me, totalPoints(game, game.turn === 0 ? 1 : 0))}. Opponent hand is hidden.`,
+    history: history.slice(-3).map((entry) => ({
+      question: entry.question.slice(0, 80),
+      advice: entry.advice.slice(0, 600),
+    })),
   };
 }

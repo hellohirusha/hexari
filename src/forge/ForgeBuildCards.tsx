@@ -24,13 +24,15 @@ export default function ForgeBuildCards({
         const name = building[0].toUpperCase() + building.slice(1);
         const reason = botTurn
           ? "Opponent's turn"
-          : game.phase !== "build"
-            ? "Roll first"
-            : !option.affordable
-              ? "Not enough resources"
-              : !enabled
-                ? "No legal placement"
-                : "Choose a location";
+          : game.phase === "setup"
+            ? "Place your starting settlement first"
+            : game.phase !== "build"
+              ? "Roll first"
+              : !option.affordable
+                ? "Not enough resources"
+                : !enabled
+                  ? "No legal placement"
+                  : "Choose a location";
         return (
           <button
             key={building}
@@ -56,12 +58,8 @@ export default function ForgeBuildCards({
                     strokeWidth="1.5"
                   />
                 </g>
-              ) : building === "city" || building === "settlement" ? (
-                <BuildingArt city={building === "city"} owner={game.turn} />
               ) : (
-                <text x="0" y="7" textAnchor="middle" fontSize="19">
-                  {building === "farm" ? "🌾" : "⚖"}
-                </text>
+                <BuildingArt city={building === "city"} owner={game.turn} />
               )}
             </svg>
           </button>

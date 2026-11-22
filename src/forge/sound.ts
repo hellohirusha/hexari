@@ -83,6 +83,8 @@ export const cueFiles: Record<Cue, string> = {
 
 const welcomeMusic = new URL("./assets/audio/crowded-pub.ogg", import.meta.url)
   .href;
+const resultMusic = new URL("./assets/audio/welcome-music.ogg", import.meta.url)
+  .href;
 const playingEffects = new Map<HTMLAudioElement, number>();
 const scheduledEffects = new Set<ReturnType<typeof setTimeout>>();
 let backgroundMusic: HTMLAudioElement | null = null;
@@ -150,11 +152,12 @@ export type WelcomeMusicStatus = "playing" | "blocked" | "unavailable";
 export type WelcomeMusicPlayer = { play: () => void; stop: () => void };
 
 /** Start immediately, retry transient failures, and retry blocked playback on interaction. */
-export function startWelcomeMusic(
-  onStatus: (status: WelcomeMusicStatus) => void = () => {},
+function startMusic(
+  source: string,
+  onStatus: (status: WelcomeMusicStatus) => void,
 ): WelcomeMusicPlayer {
   try {
-    const audio = new Audio(welcomeMusic);
+    const audio = new Audio(source);
     backgroundMusic = audio;
     audio.loop = true;
     audio.volume =
@@ -178,7 +181,7 @@ export function startWelcomeMusic(
         })
         .catch((error: unknown) => {
           if (!active || currentAttempt !== attempt) return;
-          console.warn("Forge welcome music playback failed:", error);
+          console.warn("Forge music playback failed:", error);
           const blocked =
             error &&
             typeof error === "object" &&
@@ -208,4 +211,17 @@ export function startWelcomeMusic(
     queueMicrotask(() => onStatus("unavailable"));
     return { play: () => {}, stop: () => {} };
   }
+}
+
+export function startWelcomeMusic(
+  onStatus: (status: WelcomeMusicStatus) => void = () => {},
+): WelcomeMusicPlayer {
+  return startMusic(welcomeMusic, onStatus);
+}
+
+/** The result screen uses a separate ambient loop from the welcome screen. */
+export function startResultMusic(
+  onStatus: (status: WelcomeMusicStatus) => void = () => {},
+): WelcomeMusicPlayer {
+  return startMusic(resultMusic, onStatus);
 }

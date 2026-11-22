@@ -1,23 +1,29 @@
 import { useEffect, useRef } from "react";
 import BrandMark from "../shared/BrandMark";
-import { points, type Game } from "./engine";
+import { totalPoints, type Game } from "./engine";
 
-export function resultTitle(winner: number, bot: boolean) {
+export function resultTitle(
+  winner: number,
+  bot: boolean,
+  names?: [string, string],
+) {
   return bot
     ? winner === 0
       ? "Victory"
       : "Defeat"
-    : `Player ${winner + 1} wins`;
+    : `${names?.[winner] ?? `Player ${winner + 1}`} wins`;
 }
 
 export default function ForgeResult({
   game,
   bot,
+  names,
   onViewBoard,
   onPlayAgain,
 }: {
   game: Game;
   bot: boolean;
+  names?: [string, string];
   onViewBoard: () => void;
   onPlayAgain: () => void;
 }) {
@@ -43,22 +49,24 @@ export default function ForgeResult({
         <BrandMark variant="forge" />
       </div>
       <span className="forge-result-kicker">FORGE · GAME COMPLETE</span>
-      <h2 id="forge-result-title">{resultTitle(winner, bot)}</h2>
+      <h2 id="forge-result-title">{resultTitle(winner, bot, names)}</h2>
       <p>
         {bot
           ? defeat
             ? "The bot reached 5 points first."
             : "You reached 5 points first."
-          : `Player ${winner + 1} reached 5 points first.`}
+          : `${names?.[winner] ?? `Player ${winner + 1}`} reached 5 points first.`}
       </p>
       <div className="forge-result-scores" aria-label="Final scores">
-        {game.players.map((player, index) => (
+        {game.players.map((_, index) => (
           <div key={index} className={index === winner ? "winner" : undefined}>
             <span>
-              {bot ? (index === 0 ? "You" : "Bot") : `Player ${index + 1}`}
+              {names?.[index] ??
+                (bot ? (index === 0 ? "You" : "Bot") : `Player ${index + 1}`)}
+              {names && bot ? (index === 0 ? " · You" : " · Bot") : ""}
             </span>
             <strong>
-              {points(player)} <small>VP</small>
+              {totalPoints(game, index as 0 | 1)} <small>VP</small>
             </strong>
           </div>
         ))}
