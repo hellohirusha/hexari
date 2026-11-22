@@ -1,5 +1,6 @@
 import { eventData } from "../shared/eventStream.ts";
 import { CoachAdviceStream } from "./coachAdvice.ts";
+import { DEFAULT_GEMINI_MODEL, DEFAULT_GROQ_MODEL } from "./coachModels.ts";
 
 type StreamResponse = {
   status: (n: number) => StreamResponse;
@@ -26,7 +27,7 @@ export async function streamCoach(
         Authorization: `Bearer ${env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        model: env.GROQ_MODEL || DEFAULT_GROQ_MODEL,
         messages: [{ role: "user", content: prompt }],
         stream: true,
         max_completion_tokens: 4096,
@@ -39,7 +40,7 @@ export async function streamCoach(
     if (provider === "gemini") {
       try {
         response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.GEMINI_MODEL || "gemini-3.8-flash")}:streamGenerateContent?alt=sse`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL)}:streamGenerateContent?alt=sse`,
           {
             method: "POST",
             headers: {
@@ -50,7 +51,7 @@ export async function streamCoach(
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: {
                 maxOutputTokens: 4096,
-                ...((env.GEMINI_MODEL || "gemini-3.8-flash").startsWith(
+                ...((env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL).startsWith(
                   "gemini-3",
                 )
                   ? { thinkingConfig: { thinkingLevel: "low" } }
