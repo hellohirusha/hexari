@@ -111,6 +111,28 @@ describe("Forge audio", () => {
     expect(players[0].play).toHaveBeenCalledOnce();
   });
 
+  it("plays the result music and immediately restarts the welcome loop when returning", async () => {
+    const { startWelcomeMusic, startResultMusic, soundCue, setMasterVolume } =
+      await import("../src/forge/sound");
+    const result = startResultMusic();
+    expect(players[0].src).toContain("welcome-music.ogg");
+    expect(players[0].loop).toBe(true);
+    expect(players[0].play).toHaveBeenCalledOnce();
+    soundCue("win");
+    expect(players[0].volume).toBeLessThan(0.45);
+    setMasterVolume(0.5);
+    players[1].dispatchEvent(new Event("ended"));
+    expect(players[0].volume).toBeCloseTo(0.225);
+    result.stop();
+    expect(players[0].paused).toBe(true);
+
+    const welcome = startWelcomeMusic();
+    expect(players[2].src).toContain("crowded-pub.ogg");
+    expect(players[2].play).toHaveBeenCalledOnce();
+    expect(players[2].paused).toBe(false);
+    welcome.stop();
+  });
+
   it("retries blocked welcome music after a user gesture", async () => {
     const { startWelcomeMusic } = await import("../src/forge/sound");
     rejectNextPlay = true;
