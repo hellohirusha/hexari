@@ -158,7 +158,24 @@ export function evaluateTrade({
           const max = Math.floor(
             (receivedValue * 1.2 - fixedValue) / values[resource] + 1e-10,
           );
-          return { resource, min, max };
+          // Market comparisons may suggest more cards than this hand contains.
+          // Keep that theoretical range, but distinguish the amounts the
+          // player can actually offer while the other cards stay fixed.
+          const affordableMax = Math.min(max, hand[resource]);
+          const fixedCardsAffordable = goods.every(
+            (g) =>
+              Number.isSafeInteger(hand[g]) &&
+              hand[g] >= 0 &&
+              (g === resource ||
+                (Number.isSafeInteger(give[g]) &&
+                  give[g] >= 0 &&
+                  give[g] <= hand[g])),
+          );
+          const affordable =
+            fixedCardsAffordable && min <= affordableMax
+              ? { min, max: affordableMax }
+              : null;
+          return { resource, min, max, affordable };
         })
       : [];
   return {
