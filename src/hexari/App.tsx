@@ -113,7 +113,11 @@ export default function App() {
     label: string;
     value: (v: (typeof ranked)[number]) => string;
   }[] = [
-    { label: "Score", value: (v) => v.score.toFixed(1) },
+    {
+      label: "Score / 100",
+      value: (v) =>
+        v.scoreOutOf100 === null ? "Unavailable" : v.scoreOutOf100.toFixed(1),
+    },
     {
       label: "Rank",
       value: (v) =>
@@ -359,7 +363,7 @@ export default function App() {
                       });
                       if (!result.reached) {
                         setBoardMessage(
-                          `No new board reached the target after ${result.tried} attempts. Your board is unchanged; best simulated seat gap was ${result.gap.toFixed(1)} (target ${result.threshold}).`,
+                          `No new board reached the target after ${result.tried} search rounds. Your board is unchanged; best simulated seat gap was ${result.gap.toFixed(1)} (target ${result.threshold}).`,
                         );
                         return;
                       }
@@ -1010,8 +1014,14 @@ export default function App() {
                   </div>
                   <div className="metrics">
                     <div>
-                      <small>SCORE</small>
-                      <strong>{current.score.toFixed(1)}</strong>
+                      <small title="Relative to the highest eligible score for this board and strategy">
+                        SCORE / 100
+                      </small>
+                      <strong>
+                        {current.scoreOutOf100 === null
+                          ? "Unavailable"
+                          : current.scoreOutOf100.toFixed(1)}
+                      </strong>
                     </div>
                     <div>
                       <small>SCARCITY</small>
@@ -1221,7 +1231,9 @@ export default function App() {
               <details className="ranking-disclosure" open>
                 <summary className="list-title">
                   <span>TOP CORNERS</span>
-                  <span>SCORE</span>
+                  <span title="Relative to the highest eligible score for this board and strategy">
+                    SCORE / 100
+                  </span>
                 </summary>
                 <div className="ranking">
                   {ranked
@@ -1250,7 +1262,7 @@ export default function App() {
                           </small>
                         </span>
                         <span className="rank-score">
-                          {v.score.toFixed(1)} <small>↗</small>
+                          {v.scoreOutOf100?.toFixed(1)} <small>↗</small>
                         </span>
                       </button>
                     ))}
@@ -1263,7 +1275,8 @@ export default function App() {
               <div className="section-kicker">SIDE BY SIDE</div>
               <h2>Compare corners</h2>
               <p className="compare-caption">
-                Scores compare opening potential, not chances of winning.
+                Scores are relative to the best eligible corner, not chances of
+                winning.
               </p>
               {compared.length > 1 && (
                 <p className="compare-scroll-hint">
