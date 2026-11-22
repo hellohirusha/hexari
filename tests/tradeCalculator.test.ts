@@ -51,6 +51,40 @@ describe("trade calculator", () => {
     expect(result.fairRanges).toHaveLength(1);
     expect(result.fairRanges[0].min).toBeGreaterThanOrEqual(1);
   });
+  it("distinguishes a theoretical range from what the player's hand can afford", () => {
+    const result = evaluateTrade({
+      board: defaultBoard,
+      hand: { ...emptyHand(), wood: 1 },
+      give: { ...emptyHand(), wood: 1 },
+      receive: { ...emptyHand(), ore: 9 },
+      settlements: [],
+      cities: [],
+      goal: "balanced",
+      bankRates: getBankRates([], [], 4),
+    });
+    expect(result.ready).toBe(true);
+    expect(result.fairRanges[0].min).toBeGreaterThan(1);
+    expect(result.fairRanges[0].affordable).toBeNull();
+  });
+  it("rejects a range when another fixed offered resource exceeds the hand", () => {
+    const result = evaluateTrade({
+      board: defaultBoard,
+      hand: { ...emptyHand(), wood: 1, brick: 99 },
+      give: { ...emptyHand(), wood: 2, brick: 1 },
+      receive: { ...emptyHand(), ore: 9 },
+      settlements: [],
+      cities: [],
+      goal: "balanced",
+      bankRates: getBankRates([], [], 4),
+    });
+    const brickRange = result.fairRanges.find(
+      (range) => range.resource === "brick",
+    )!;
+    expect(brickRange.min).toBeLessThanOrEqual(brickRange.max);
+    expect(brickRange.min).toBeLessThanOrEqual(99);
+    expect(result.invalid).toBe(true);
+    expect(brickRange.affordable).toBeNull();
+  });
   it("counts city production twice and detects accessible ports", () => {
     const settlement = personalProduction(defaultBoard, [0], []);
     const city = personalProduction(defaultBoard, [], [0]);
