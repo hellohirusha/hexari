@@ -48,16 +48,27 @@ function portsFor(player: ModelPlayer, ports: Port[]) {
 function afford(hand: Hand, cost: Hand) {
   return goods.every((g) => hand[g] >= cost[g]);
 }
-function pay(hand: Hand, cost: Hand) {
+function pay(hand: Hand, cost: Hand, bank: Hand) {
   goods.forEach((g) => {
     hand[g] -= cost[g];
+    bank[g] += cost[g];
   });
 }
 
+/** One starting card from each producing tile beside the second settlement. */
+export function startingResources(board: Tile[], corner: number): Hand {
+  const hand = emptyHand();
+  for (const id of vertices[corner]?.tiles ?? []) {
+    const tile = board[id];
+    if (tile && tile.resource !== "desert") hand[tile.resource]++;
+  }
+  return hand;
+}
+
 /** Exchange surplus for a single plan, preserving cards needed by that plan. */
-function exchange(hand: Hand, cost: Hand, ports: Port[]) {
+function exchange(hand: Hand, cost: Hand, ports: Port[], bank: Hand) {
   for (let step = 0; step < 10 && !afford(hand, cost); step++) {
-    const needed = goods.find((g) => hand[g] < cost[g]);
+    const needed = goods.find((g) => hand[g] < cost[g] && bank[g] > 0);
     if (!needed) break;
     const offer = goods
       .map((g) => {
@@ -74,12 +85,47 @@ function exchange(hand: Hand, cost: Hand, ports: Port[]) {
       .sort((a, b) => b.surplus / b.rate - a.surplus / a.rate)[0];
     if (!offer) break;
     hand[offer.g] -= offer.rate;
+    bank[offer.g] += offer.rate;
     hand[needed]++;
+    bank[needed]--;
+  }
+}
+
+/** Distribute a roll from finite stock; a shared shortage pays nobody for that resource. */
+export function distributeProduction(
+  board: Tile[],
+  players: Pick<ModelPlayer, "settlements" | "cities" | "hand">[],
+  bank: Hand,
+  roll: number,
+) {
+  const claims = players.map((player) => {
+    const claim = emptyHand();
+    for (const [corner, multiplier] of [
+      ...player.settlements.map((id) => [id, 1] as const),
+      ...player.cities.map((id) => [id, 2] as const),
+    ]) {
+      for (const tileId of vertices[corner].tiles) {
+        const tile = board[tileId];
+        if (tile.number === roll && tile.resource !== "desert")
+          claim[tile.resource] += multiplier;
+      }
+    }
+    return claim;
+  });
+  for (const resource of goods) {
+    const claimants = claims.filter((claim) => claim[resource] > 0);
+    const total = claimants.reduce((sum, claim) => sum + claim[resource], 0);
+    if (total > bank[resource] && claimants.length > 1) continue;
+    players.forEach((player, index) => {
+      const amount = Math.min(claims[index][resource], bank[resource]);
+      player.hand[resource] += amount;
+      bank[resource] -= amount;
+    });
   }
 }
 
 /** One simplified race: drafts, dice, bank trades, cities and abstract expansion.
- * No robber, player trades, development cards, road connectivity or resource bank limits. */
+ * No robber, player trades, development cards or road connectivity. */
 export function simulateStrategyRace(
   board: Tile[],
   ports: Port[],
@@ -93,6 +139,7 @@ export function simulateStrategyRace(
     cities: [],
     hand: emptyHand(),
   }));
+  const bank: Hand = { wood: 19, brick: 19, wheat: 19, ore: 19, sheep: 19 };
   const ranked = Object.fromEntries(
     strategies.map((strategy) => [
       strategy,
@@ -112,22 +159,18 @@ export function simulateStrategyRace(
     const id = ranked[player.strategy].find((corner) => legal(corner, blocked));
     if (id === undefined) return null;
     player.settlements.push(id);
+    if (player.settlements.length === 2) {
+      player.hand = startingResources(board, id);
+      goods.forEach((resource) => {
+        player.hand[resource] = Math.min(player.hand[resource], bank[resource]);
+        bank[resource] -= player.hand[resource];
+      });
+    }
     block(id, blocked);
   }
   for (let turn = 0; turn < maxTurns; turn++) {
     const roll = 2 + Math.floor(random() * 6) + Math.floor(random() * 6);
-    for (const player of players) {
-      for (const [corner, multiplier] of [
-        ...player.settlements.map((id) => [id, 1] as const),
-        ...player.cities.map((id) => [id, 2] as const),
-      ]) {
-        for (const tileId of vertices[corner].tiles) {
-          const tile = board[tileId];
-          if (tile.number === roll && tile.resource !== "desert")
-            player.hand[tile.resource] += multiplier;
-        }
-      }
-    }
+    distributeProduction(board, players, bank, roll);
     const player = players[turn % 4];
     for (let actions = 0; actions < 5; actions++) {
       const candidate = ranked[player.strategy].find((id) =>
@@ -154,6 +197,7 @@ export function simulateStrategyRace(
           player.hand,
           target === "city" ? cityCost : settlementCost,
           portsFor(player, ports),
+          bank,
         );
         plan = valid.find((item) =>
           afford(player.hand, item === "city" ? cityCost : settlementCost),
@@ -161,10 +205,10 @@ export function simulateStrategyRace(
       }
       if (!plan) break;
       if (plan === "city") {
-        pay(player.hand, cityCost);
+        pay(player.hand, cityCost, bank);
         player.cities.push(player.settlements.shift()!);
       } else {
-        pay(player.hand, settlementCost);
+        pay(player.hand, settlementCost, bank);
         player.settlements.push(candidate!);
         block(candidate!, blocked);
       }
@@ -192,12 +236,15 @@ export function simulateStrategyDistribution(
   let unfinished = 0;
   for (let index = 0; index < boards; index++) {
     const sample = shuffledBoard(board, random);
+    // Reuse each board's dice sequence across seat rotations to reduce noise
+    // from one strategy encountering luckier rolls than another.
+    const diceSeed = Math.floor(random() * 0x100000000);
     for (let rotation = 0; rotation < 4; rotation++) {
       const winner = simulateStrategyRace(
         sample,
         ports,
         rotation,
-        random,
+        seeded(diceSeed),
         maxTurns,
       );
       if (winner) wins[winner]++;
