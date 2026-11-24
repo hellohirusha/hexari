@@ -327,7 +327,9 @@ Run the multiplayer service as a separate Node process with start command `npm r
 
 ### GitHub Actions
 
-[CI](.github/workflows/ci.yml) runs installation, lint, formatting, tests, multiplayer scenarios, and both builds on pushes and pull requests using Node 22 and 26. After a successful push to the default branch, it calls the [production deployment workflow](.github/workflows/cd.yml), which deploys the verified commit to Vercel and Railway when it is still the branch head.
+[CI](.github/workflows/ci.yml) runs installation, lint, formatting, tests, multiplayer scenarios, and both builds on pushes and pull requests using Node 22 and 26. After all checks pass on `main`, it confirms that the commit is the current `main` head and resulted from a merged pull request before calling the [production deployment workflow](.github/workflows/cd.yml). Both services deploy the same verified commit. Direct pushes and stale commits do not qualify.
+
+Vercel Git auto-deployments are disabled in `vercel.json` so GitHub Actions controls deployments. In Railway, open the multiplayer service's **Settings > Source** and disable GitHub auto-deployments as well; otherwise Railway can deploy independently of CI. Require pull requests for changes to `main` and prohibit force pushes in GitHub branch protection. Manual deployments and deploy hooks are separate deployment paths and must be restricted or removed if production releases should only come from this workflow.
 
 Configure these GitHub Actions values:
 
