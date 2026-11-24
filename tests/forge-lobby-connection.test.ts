@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectLobbyWithRetry } from "../src/forge/online/lobbyConnection";
+import {
+  connectLobbyWithRetry,
+  reconnectOnlineGame,
+} from "../src/forge/online/lobbyConnection";
 
 class FakeSocket {
   static sockets: FakeSocket[] = [];
@@ -7,6 +10,7 @@ class FakeSocket {
   onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
   closed = false;
+  messages: string[] = [];
 
   constructor(public url: string) {
     FakeSocket.sockets.push(this);
@@ -15,6 +19,9 @@ class FakeSocket {
   close() {
     this.closed = true;
     this.onclose?.();
+  }
+  send(message: string) {
+    this.messages.push(message);
   }
 }
 
@@ -77,5 +84,59 @@ describe("Forge lobby connection", () => {
     vi.runAllTimers();
     expect(FakeSocket.sockets).toHaveLength(1);
     expect(result.onFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe("Forge active-game reconnection", () => {
+  beforeEach(() => {
+    FakeSocket.sockets = [];
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("times out a stalled connection and resumes through the next socket", () => {
+    const bind = vi.fn();
+    const onRetry = vi.fn();
+    const onFailure = vi.fn();
+    const cancel = reconnectOnlineGame({
+      address: "wss://example.com/forge",
+      credentials: { room: "room", token: "token" },
+      bind,
+      onRetry,
+      onFailure,
+    });
+    vi.advanceTimersByTime(10000);
+    expect(FakeSocket.sockets[0]!.closed).toBe(true);
+    expect(onRetry).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(500);
+    const second = FakeSocket.sockets[1]!;
+    second.onopen?.();
+    expect(bind).toHaveBeenCalledWith(second);
+    expect(JSON.parse(second.messages[0]!)).toEqual({
+      type: "resume",
+      room: "room",
+      token: "token",
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+    cancel();
+    expect(second.closed).toBe(false);
+  });
+
+  it("offers recovery after four stalled connection attempts", () => {
+    const onFailure = vi.fn();
+    reconnectOnlineGame({
+      address: "wss://example.com/forge",
+      credentials: { room: "room", token: "token" },
+      bind: vi.fn(),
+      onRetry: vi.fn(),
+      onFailure,
+    });
+    vi.runAllTimers();
+    expect(FakeSocket.sockets).toHaveLength(4);
+    expect(onFailure).toHaveBeenCalledOnce();
   });
 });
