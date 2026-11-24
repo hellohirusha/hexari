@@ -1763,10 +1763,6 @@ html[data-theme="light"]
   font-size: 0.95rem;
   font-weight: 700;
 }
-.forge-show-result {
-  float: right;
-}
-
 .forge-mode-button,
 .forge-guide-toggle,
 .forge-sound-toggle,
