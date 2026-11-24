@@ -244,7 +244,7 @@ function newRoom() {
     tokenHashes: tokens.map(tokenHash),
     users: [null, null],
     session: {
-      game: newGame(Date.now(), { manualSetup: true }),
+      game: newGame(Date.now()),
       revision: 0,
       offer: null,
       names: [randomNickname(), randomNickname()],
