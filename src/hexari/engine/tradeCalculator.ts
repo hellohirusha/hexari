@@ -90,12 +90,14 @@ export function evaluateTrade({
   ) as Hand;
   const mean = goods.reduce((sum, g) => sum + rates[g], 0) / goods.length;
   const cost = goalCosts[goal];
+  const scarcity = Object.fromEntries(
+    goods.map((g) => [
+      g,
+      Math.min(3, Math.max(0.4, mean / Math.max(rates[g], 1 / 36))),
+    ]),
+  ) as Hand;
   const values = Object.fromEntries(
     goods.map((g) => {
-      const scarcity = Math.min(
-        3,
-        Math.max(0.4, mean / Math.max(rates[g], 1 / 36)),
-      );
       const needed = Math.max(0, (cost[g] ?? 0) - hand[g]);
       const importance =
         needed > 0
@@ -103,7 +105,7 @@ export function evaluateTrade({
           : goal !== "balanced" && hand[g] > (cost[g] ?? 0)
             ? 0.85
             : 1;
-      return [g, scarcity * importance];
+      return [g, scarcity[g] * importance];
     }),
   ) as Hand;
   const offerCount = goods.reduce((sum, g) => sum + give[g], 0);
@@ -119,7 +121,29 @@ export function evaluateTrade({
       give[g] > hand[g] ||
       (give[g] > 0 && receive[g] > 0),
   );
-  const givenValue = goods.reduce((sum, g) => sum + give[g] * values[g], 0);
+  // Spend surplus before cards reserved for the selected goal. Each card
+  // removed from that reserve increases the goal deficit and is more costly.
+  const offeredValue = (resource: Goods, count: number) => {
+    if (goal === "balanced") return count * scarcity[resource];
+    const surplus = Math.max(0, hand[resource] - (cost[resource] ?? 0));
+    return (
+      scarcity[resource] *
+      (Math.min(count, surplus) * 0.85 + Math.max(0, count - surplus) * 1.4)
+    );
+  };
+  // Invert the same piecewise valuation when calculating comparable offers.
+  const offeredCountForValue = (resource: Goods, value: number) => {
+    if (goal === "balanced") return value / scarcity[resource];
+    const surplus = Math.max(0, hand[resource] - (cost[resource] ?? 0));
+    const surplusValue = surplus * 0.85 * scarcity[resource];
+    return value <= surplusValue
+      ? value / (0.85 * scarcity[resource])
+      : surplus + (value - surplusValue) / (1.4 * scarcity[resource]);
+  };
+  const givenValue = goods.reduce(
+    (sum, g) => sum + offeredValue(g, give[g]),
+    0,
+  );
   const receivedValue = goods.reduce(
     (sum, g) => sum + receive[g] * values[g],
     0,
@@ -148,15 +172,18 @@ export function evaluateTrade({
   const fairRanges =
     wantedCount > 0
       ? giveKinds.map((resource) => {
-          const fixedValue = givenValue - give[resource] * values[resource];
+          const fixedValue =
+            givenValue - offeredValue(resource, give[resource]);
           const min = Math.max(
             giveKinds.length === 1 ? 1 : 0,
             Math.ceil(
-              (receivedValue * 0.8 - fixedValue) / values[resource] - 1e-10,
+              offeredCountForValue(resource, receivedValue * 0.8 - fixedValue) -
+                1e-10,
             ),
           );
           const max = Math.floor(
-            (receivedValue * 1.2 - fixedValue) / values[resource] + 1e-10,
+            offeredCountForValue(resource, receivedValue * 1.2 - fixedValue) +
+              1e-10,
           );
           // Market comparisons may suggest more cards than this hand contains.
           // Keep that theoretical range, but distinguish the amounts the
