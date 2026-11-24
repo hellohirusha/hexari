@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { bankRate, goods, type Game, type Goods } from "./engine";
+import { bankTradeOutcome, type PendingBankTrade } from "./bankTrade";
 import type { Cue } from "./sound";
 import { TerrainArt } from "../shared/TerrainArt";
 
@@ -59,21 +60,31 @@ export default function ForgeMarket({
   onTrade,
   onCue,
   hideTrade = false,
+  bankPending = false,
 }: {
   game: Game;
   bot: boolean;
-  onBank: (give: Goods, receive: Goods) => void;
+  onBank: (give: Goods, receive: Goods) => boolean | "pending";
   onTrade: (give: Goods, receive: Goods) => boolean;
   onCue: (cue: Cue) => void;
   hideTrade?: boolean;
+  bankPending?: boolean;
 }) {
   const [give, setGive] = useState<Goods | null>(null),
     [receive, setReceive] = useState<Goods | null>(null),
     [pending, setPending] = useState(false),
     [message, setMessage] = useState(""),
     [bankGive, setBankGive] = useState<Goods | null>(null);
+  const [bankAttempt, setBankAttempt] = useState<PendingBankTrade | null>(null);
   const hand = game.players[game.turn].hand;
   const rate = bankRate();
+  if (bankAttempt) {
+    const outcome = bankTradeOutcome(bankAttempt, game, bankPending);
+    if (outcome !== "waiting") {
+      if (outcome === "accepted") setBankGive(null);
+      setBankAttempt(null);
+    }
+  }
   const selectedBankGive =
     game.phase === "build" && bankGive && hand[bankGive] >= rate
       ? bankGive
@@ -92,9 +103,18 @@ export default function ForgeMarket({
       setPending(true);
       return;
     }
-    if (!botAcceptsTrade(game, give, receive) || !onTrade(give, receive)) {
+    if (!botAcceptsTrade(game, give, receive)) {
       onCue("blocked");
       setMessage("The bot declined this offer.");
+      setGive(null);
+      setReceive(null);
+      return;
+    }
+    if (!onTrade(give, receive)) {
+      onCue("blocked");
+      setMessage(
+        "Trade unavailable. One player does not have the offered card.",
+      );
       return;
     }
     setMessage("The bot accepted the trade.");
@@ -149,8 +169,16 @@ export default function ForgeMarket({
                   onCue(resource);
                   return;
                 }
-                onBank(selectedBankGive, resource);
-                setBankGive(null);
+                const result = onBank(selectedBankGive, resource);
+                if (result === true) setBankGive(null);
+                else if (result === "pending")
+                  setBankAttempt({
+                    player: game.turn,
+                    give: selectedBankGive,
+                    receive: resource,
+                    giveBefore: hand[selectedBankGive],
+                    receiveBefore: hand[resource],
+                  });
               }}
             >
               <svg viewBox="-20 -20 40 40" aria-hidden="true">
@@ -225,6 +253,8 @@ export default function ForgeMarket({
                   onClick={() => {
                     setPending(false);
                     setMessage("Trade declined.");
+                    setGive(null);
+                    setReceive(null);
                     onCue("blocked");
                   }}
                 >
