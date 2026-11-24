@@ -19,6 +19,29 @@ const offer = {
 const noop = () => {};
 
 describe("Forge online lobby", () => {
+  it("blocks a localhost server configured on the production page", () => {
+    vi.stubEnv("VITE_FORGE_SERVER_URL", "ws://localhost:8787/forge");
+    vi.stubGlobal("window", {
+      location: {
+        hash: "",
+        hostname: "forge.example",
+        origin: "https://forge.example",
+      },
+    });
+    vi.stubGlobal("sessionStorage", { getItem: () => null });
+    try {
+      const html = renderToStaticMarkup(
+        <ForgeOnlineLobby onClose={noop} onReady={noop} onAccount={noop} />,
+      );
+      expect(html).toContain(
+        "The online server address is not allowed from this page.",
+      );
+      expect(html).not.toContain("Finding a player...");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
   it("starts a new search only when the previous match was left or has expired", () => {
     expect(
       canSearchAfterClosed(
@@ -46,7 +69,13 @@ describe("Forge online lobby", () => {
     ).toBe(false);
   });
   it("offers resume and a new game when this tab has saved credentials", () => {
-    vi.stubGlobal("window", { location: { hash: "", hostname: "localhost" } });
+    vi.stubGlobal("window", {
+      location: {
+        hash: "",
+        hostname: "localhost",
+        origin: "http://localhost:5173",
+      },
+    });
     vi.stubGlobal("sessionStorage", {
       getItem: () => JSON.stringify({ room: "room", token: "token" }),
     });
@@ -61,11 +90,38 @@ describe("Forge online lobby", () => {
       vi.unstubAllGlobals();
     }
   });
+  it("starts leaving the saved game when finding a new game after a disconnect", () => {
+    vi.stubGlobal("window", {
+      location: {
+        hash: "",
+        hostname: "localhost",
+        origin: "http://localhost:5173",
+      },
+    });
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => JSON.stringify({ room: "room", token: "token" }),
+    });
+    try {
+      const html = renderToStaticMarkup(
+        <ForgeOnlineLobby
+          onClose={noop}
+          onReady={noop}
+          onAccount={noop}
+          startNew
+        />,
+      );
+      expect(html).toContain("Connecting to your previous game...");
+      expect(html).not.toContain("Resume game");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("allows leaving the previous game to accept an invitation", () => {
     vi.stubGlobal("window", {
       location: {
         hash: "#forge-room=invite&from=AmberFox%231234",
         hostname: "localhost",
+        origin: "http://localhost:5173",
       },
     });
     vi.stubGlobal("sessionStorage", {
