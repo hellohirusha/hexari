@@ -4,10 +4,13 @@ import PixiTerrain from "../shared/PixiLayer";
 import { playBotTurn } from "./bot";
 import {
   soundCue,
+  preparePlacementSounds,
+  prepareResultSounds,
   scheduleSoundCue,
   setMasterVolume,
   startWelcomeMusic,
-  startResultMusic,
+  startResultAudio,
+  resultSound,
   stopSoundEffects,
   type Cue,
   type WelcomeMusicPlayer,
@@ -28,7 +31,11 @@ import ForgeOnlineLobby, {
   onlineCredentials,
   type OnlineConnection,
 } from "./ForgeOnlineLobby";
-import { loadAccountClient, validPlayerName } from "./account";
+import {
+  loadAccountClient,
+  refreshAfterSignupConfirmation,
+  validPlayerName,
+} from "./account";
 import { getBotNickname, getOrCreateNickname } from "./nickname";
 import type { Session } from "@supabase/supabase-js";
 import ForgeOnlineTrade from "./ForgeOnlineTrade";
@@ -49,10 +56,14 @@ import { watchFocusLoss } from "./focusPause";
 import { applyTurnTimeout } from "./turnTimeout";
 import { matchingRollTiles } from "./rollHighlight";
 import { turnLabel } from "./turnLabel";
+import { newPlacementKeys, roadPlacementKey } from "./placementAnimation";
 import BrandMark from "../shared/BrandMark";
+import ForgeScoreName from "./ForgeScoreName";
+import { hexariHomeHref } from "../shared/navigation";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -208,6 +219,11 @@ export default function Forge({
     id: string | null;
     name: string | null;
   }>({ signedIn: false, id: null, name: null });
+  const startedRef = useRef(started);
+  useLayoutEffect(() => {
+    startedRef.current = started;
+  }, [started]);
+  const canReloadAfterConfirmation = useCallback(() => !startedRef.current, []);
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
@@ -227,9 +243,14 @@ export default function Forge({
     void loadAccountClient()
       .then(async (client) => {
         if (!client || !active) return;
-        const { data } = client.auth.onAuthStateChange((_event, session) => {
+        const { data } = client.auth.onAuthStateChange((event, session) => {
           authVersion++;
           updateAccount(session);
+          refreshAfterSignupConfirmation(
+            event,
+            session,
+            canReloadAfterConfirmation,
+          );
         });
         unsubscribe = () => data.subscription.unsubscribe();
         const version = authVersion;
@@ -243,7 +264,7 @@ export default function Forge({
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [canReloadAfterConfirmation]);
   const buildTrigger = useRef<SVGElement | null>(null);
   const [openAccount, setOpenAccount] = useState(false);
   const returnToOnline = useRef(false);
@@ -275,7 +296,10 @@ export default function Forge({
     pending: boolean;
     recoverable?: boolean;
   } | null>(null);
-  const [opponentLeft, setOpponentLeft] = useState(false);
+  const [opponentNotice, setOpponentNotice] = useState<
+    "disconnected" | "left" | "recoverable" | null
+  >(null);
+  const [startNewOnline, setStartNewOnline] = useState(false);
   const onlineSocket = useRef<WebSocket | null>(null);
   const onlineRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onlineRef = useRef(online);
@@ -334,7 +358,7 @@ export default function Forge({
     },
     [],
   );
-  function onlineCommand(command: OnlineCommand) {
+  function onlineCommand(command: OnlineCommand): boolean {
     const current = onlineRef.current;
     if (
       !current ||
@@ -343,7 +367,7 @@ export default function Forge({
       !onlineSocket.current ||
       onlineSocket.current.readyState !== WebSocket.OPEN
     )
-      return;
+      return false;
     onlineRef.current = { ...current, pending: true };
     setOnline(onlineRef.current);
     try {
@@ -354,10 +378,12 @@ export default function Forge({
           command,
         }),
       );
+      return true;
     } catch {
       onlineRef.current = { ...current, pending: false, connected: false };
       setOnline(onlineRef.current);
       setMessage("The online connection is unavailable.");
+      return false;
     }
   }
   function sendOnlineEvent(
@@ -404,6 +430,23 @@ export default function Forge({
     });
   }
   const gameRef = useRef(game);
+  const previousBoard = useRef<{ game: Game; started: boolean } | null>(null);
+  const [animatedPlacements, setAnimatedPlacements] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  useLayoutEffect(() => {
+    const previous = previousBoard.current;
+    previousBoard.current = { game, started };
+    setAnimatedPlacements(
+      previous?.started && started
+        ? newPlacementKeys(previous.game, game)
+        : new Set(),
+    );
+  }, [game, started]);
+  useEffect(() => {
+    preparePlacementSounds();
+    prepareResultSounds();
+  }, []);
   const diceDisplayRef = useRef<HTMLSpanElement>(null);
   const boardSvgRef = useRef<SVGSVGElement>(null);
   const rollEffectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -471,7 +514,12 @@ export default function Forge({
       peerConnected: initialPeerConnected,
     } = connection;
     onlineSocket.current = socket;
-    setOpponentLeft(false);
+    setOpponentNotice(
+      !initialPeerConnected && session.game.phase !== "end"
+        ? "disconnected"
+        : null,
+    );
+    setStartNewOnline(false);
     const current = {
       seat,
       session,
@@ -526,6 +574,8 @@ export default function Forge({
           } else if (data.type === "peer-disconnected") {
             peerConnected = false;
             updateConnection(false);
+            if (gameRef.current.phase !== "end")
+              setOpponentNotice("disconnected");
             setMessage("Waiting for the other player to reconnect.");
           } else if (data.type === "peer-reconnected") {
             peerConnected = true;
@@ -590,15 +640,6 @@ export default function Forge({
                 nextSession.game,
               );
               if (placement) soundCue(placement);
-              if (
-                previous.session.game.phase !== "end" &&
-                nextSession.game.phase === "end" &&
-                nextSession.game.winner !== null
-              )
-                scheduleSoundCue(
-                  nextSession.game.winner === seat ? "win" : "lose",
-                  placement ? 550 : 0,
-                );
             }
             const updated = {
               ...previous,
@@ -611,7 +652,10 @@ export default function Forge({
             gameRef.current = updated.session.game;
             setGame(updated.session.game);
             retryUntil = 0;
-            if (peerConnected) setMessage("");
+            if (peerConnected) {
+              setOpponentNotice(null);
+              setMessage("");
+            }
             setClock(Date.now());
             setTarget(null);
             if (typeof data.activity === "string")
@@ -641,8 +685,10 @@ export default function Forge({
             }
             if (data.recoverable !== true)
               sessionStorage.removeItem(ONLINE_SESSION_KEY);
-            if (isOpponentDeparture(data.code, data.recoverable))
-              setOpponentLeft(true);
+            if (data.code === "opponent_timeout" && data.recoverable === true)
+              setOpponentNotice("recoverable");
+            else if (isOpponentDeparture(data.code, data.recoverable))
+              setOpponentNotice("left");
             updateConnection(false);
             if (onlineRef.current) {
               onlineRef.current = {
@@ -745,6 +791,7 @@ export default function Forge({
       if (welcomeMusicRef.current === player) welcomeMusicRef.current = null;
     };
   }, [started, sound]);
+  const resultSeat = online?.seat;
   useEffect(() => {
     if (
       !started ||
@@ -754,9 +801,19 @@ export default function Forge({
       resultDismissed
     )
       return;
-    const player = startResultMusic();
+    const outcome = resultSound(game.winner, opponent, resultSeat);
+    if (!outcome) return;
+    const player = startResultAudio(outcome);
     return () => player.stop();
-  }, [started, sound, game.phase, game.winner, resultDismissed]);
+  }, [
+    started,
+    sound,
+    game.phase,
+    game.winner,
+    resultDismissed,
+    opponent,
+    resultSeat,
+  ]);
   // Attempt playback inside the leave interaction before React paints the welcome screen.
   function startWelcomeOnReturn() {
     if (sound && !welcomeMusicRef.current)
@@ -848,14 +905,10 @@ export default function Forge({
         ].slice(-100),
       );
       const placement = placementSound(game, result.game);
-      if (sound && placement) playBotCue(placement);
-      if (sound && result.game.phase === "end")
-        scheduleSoundCue(
-          result.game.winner === 0 ? "win" : "lose",
-          (game.phase === "roll" ? 500 : 0) + (placement ? 550 : 0),
-        );
-      else if (
+      if (sound && placement) soundCue(placement);
+      if (
         sound &&
+        result.game.phase !== "end" &&
         !placement &&
         result.actions.some((action) => action.startsWith("Traded"))
       )
@@ -918,7 +971,12 @@ export default function Forge({
     120,
     Math.max(0, 120 - Math.floor((clock - game.turnStarted) / 1000)),
   );
-  function choose(id: number, to?: number, trigger?: SVGElement) {
+  function choose(
+    id: number,
+    to?: number,
+    trigger?: SVGElement,
+    suppressSelectSound = false,
+  ) {
     if (botTurn) return;
     if (game.phase === "setup") {
       if (to !== undefined || !legalSetupSettlement(game, id)) {
@@ -955,7 +1013,7 @@ export default function Forge({
         return;
       }
     }
-    if (sound) soundCue("select");
+    if (sound && !suppressSelectSound) soundCue("select");
     buildTrigger.current = trigger ?? null;
     setTarget({ at: id, to });
   }
@@ -979,7 +1037,10 @@ export default function Forge({
     )
       return;
     if (opponent === "online") {
-      onlineCommand({ type: "build", building, at, to });
+      if (onlineCommand({ type: "build", building, at, to })) {
+        setTarget(null);
+        setMessage("Placing...");
+      }
       return;
     }
     const now = eventTime();
@@ -1000,7 +1061,6 @@ export default function Forge({
     } else {
       if (sound) {
         soundCue(building);
-        if (next.phase === "end") scheduleSoundCue("win", 550);
       }
       if (game.phase === "setup") {
         log(
@@ -1025,18 +1085,18 @@ export default function Forge({
     setGame(next);
     setTarget(null);
   }
-  function tradeWithBank(give: Goods, receive: Goods) {
+  function tradeWithBank(give: Goods, receive: Goods): boolean | "pending" {
     if (opponent === "online") {
-      onlineCommand({ type: "bank", give, receive });
-      return;
+      return onlineCommand({ type: "bank", give, receive }) ? "pending" : false;
     }
     const rate = 4;
     const next = transition(game, { type: "bank", give, receive });
-    if (next === game) return;
+    if (next === game) return false;
     setGame(next);
     setMessage(`Traded ${rate} ${give} for one ${receive}.`);
     log(`${playerNames[game.turn]} traded ${rate} ${give} for 1 ${receive}.`);
     if (sound) soundCue("bank");
+    return true;
   }
   function tradeWithPlayer(give: Goods, receive: Goods) {
     const next = transition(game, { type: "playerTrade", give, receive });
@@ -1109,7 +1169,8 @@ export default function Forge({
     log("Game resumed.");
   }
   function finishOnlineExit(findNew: boolean, keepCredentials = false) {
-    setOpponentLeft(false);
+    setOpponentNotice(null);
+    setStartNewOnline(findNew && keepCredentials);
     for (const pending of pendingChats.current.values()) {
       clearTimeout(pending.timer);
       pending.resolve(false);
@@ -1307,7 +1368,11 @@ export default function Forge({
       <main className="forge-welcome">
         {onlineLobby && (
           <ForgeOnlineLobby
-            onClose={() => setOnlineLobby(false)}
+            startNew={startNewOnline}
+            onClose={() => {
+              setOnlineLobby(false);
+              setStartNewOnline(false);
+            }}
             onReady={enterOnline}
             onAccount={() => {
               returnToOnline.current = true;
@@ -1320,6 +1385,7 @@ export default function Forge({
         {confirmation}
         {settingsOpen && (
           <ForgeSettings
+            canReloadAfterConfirmation={canReloadAfterConfirmation}
             initialPage={accountCallback || openAccount ? "Account" : undefined}
             timerRunning={false}
             sound={sound}
@@ -1377,13 +1443,16 @@ export default function Forge({
               className="button ghost"
               onClick={() => {
                 if (window.history.length > 1) window.history.back();
-                else window.location.assign(standalone ? "about:blank" : "/");
+                else
+                  window.location.assign(
+                    standalone ? "about:blank" : hexariHomeHref(),
+                  );
               }}
             >
               Leave game
             </button>
           </div>
-          {!standalone && <a href="/">Back to Hexari</a>}
+          {!standalone && <a href={hexariHomeHref()}>Back to Hexari</a>}
         </div>
       </main>
     );
@@ -1420,11 +1489,24 @@ export default function Forge({
           document.body,
         )}
       {confirmation}
-      {opponentLeft &&
+      {opponentNotice &&
         createPortal(
           <ForgeOpponentLeftNotice
-            onReturn={() => finishOnlineExit(false)}
-            onFindGame={() => finishOnlineExit(true)}
+            disconnected={opponentNotice !== "left"}
+            timedOut={opponentNotice === "recoverable"}
+            busy={online?.pending === true}
+            onReturn={() => {
+              if (opponentNotice === "left") finishOnlineExit(false);
+              else if (onlineSocket.current?.readyState === WebSocket.OPEN)
+                requestOnlineExit(false);
+              else finishOnlineExit(false, true);
+            }}
+            onFindGame={() => {
+              if (opponentNotice === "left") finishOnlineExit(true);
+              else if (onlineSocket.current?.readyState === WebSocket.OPEN)
+                requestOnlineExit(true);
+              else finishOnlineExit(true, true);
+            }}
           />,
           document.body,
         )}
@@ -1453,6 +1535,7 @@ export default function Forge({
       )}
       {settingsOpen && (
         <ForgeSettings
+          canReloadAfterConfirmation={canReloadAfterConfirmation}
           initialPage={accountCallback || openAccount ? "Account" : undefined}
           sound={sound}
           onSound={toggleSound}
@@ -1533,6 +1616,30 @@ export default function Forge({
           </button>
         </div>
         <ForgeGuide />
+        <button
+          className="button ghost forge-settings-toggle"
+          type="button"
+          aria-label="Settings"
+          title="Settings"
+          onClick={() => {
+            setMenuOpen(false);
+            setSettingsOpen(true);
+          }}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            aria-hidden="true"
+          >
+            <path
+              d="M10 2h4l.6 2.2 1.7.7 2-1.2 2 2-1.2 2 .7 1.7L22 10v4l-2.2.6-.7 1.7 1.2 2-2 2-2-1.2-1.7.7L14 22h-4l-.6-2.2-1.7-.7-2 1.2-2-2 1.2-2-.7-1.7L2 14v-4l2.2-.6.7-1.7-1.2-2 2-2 2 1.2 1.7-.7L10 2Z"
+              strokeLinejoin="round"
+            />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
         <div
           className="forge-game-menu"
           onBlur={(event) => {
@@ -1543,19 +1650,19 @@ export default function Forge({
             if (event.key === "Escape") {
               setMenuOpen(false);
               event.currentTarget
-                .querySelector<HTMLButtonElement>(".forge-settings-toggle")
+                .querySelector<HTMLButtonElement>(".forge-restart")
                 ?.focus();
             }
           }}
         >
           <button
-            className="button ghost forge-settings-toggle"
+            className="button ghost forge-restart"
             type="button"
-            aria-label="Game menu"
-            title="Game menu"
+            aria-label="Game options"
+            title="Game options"
             aria-expanded={menuOpen}
             aria-controls="forge-game-menu"
-            onClick={() => setMenuOpen(!menuOpen)}
+            onClick={() => setMenuOpen((open) => !open)}
           >
             <svg
               viewBox="0 0 24 24"
@@ -1564,11 +1671,10 @@ export default function Forge({
               strokeWidth="1.8"
               aria-hidden="true"
             >
-              <path
-                d="M10 2h4l.6 2.2 1.7.7 2-1.2 2 2-1.2 2 .7 1.7L22 10v4l-2.2.6-.7 1.7 1.2 2-2 2-2-1.2-1.7.7L14 22h-4l-.6-2.2-1.7-.7-2 1.2-2-2 1.2-2-.7-1.7L2 14v-4l2.2-.6.7-1.7-1.2-2 2-2 2 1.2 1.7-.7L10 2Z"
-                strokeLinejoin="round"
-              />
-              <circle cx="12" cy="12" r="3" />
+              <path d="M9 6h11M9 12h11M9 18h11" strokeLinecap="round" />
+              <circle cx="4.5" cy="6" r="1" />
+              <circle cx="4.5" cy="12" r="1" />
+              <circle cx="4.5" cy="18" r="1" />
             </svg>
           </button>
           {menuOpen && (
@@ -1581,45 +1687,34 @@ export default function Forge({
                 type="button"
                 onClick={() => {
                   setMenuOpen(false);
-                  setSettingsOpen(true);
+                  setPendingConfirmation("restart");
                 }}
               >
-                Settings
+                New game
               </button>
               <button
                 type="button"
                 disabled={game.phase === "end"}
-                onClick={pauseGame}
+                onClick={() => {
+                  setMenuOpen(false);
+                  pauseGame();
+                }}
               >
                 Pause game
               </button>
               <button
                 type="button"
                 className="forge-leave-game"
-                onClick={leaveGame}
+                onClick={() => {
+                  setMenuOpen(false);
+                  leaveGame();
+                }}
               >
                 Leave game
               </button>
             </div>
           )}
         </div>
-        <button
-          className="button ghost forge-restart"
-          type="button"
-          aria-label="Start a new game"
-          title="Start a new game"
-          onClick={() => setPendingConfirmation("restart")}
-        >
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M4 11a8 8 0 1 1 2.3 5.7M4 4v7h7"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
       </div>
       <div className="forge-layout">
         <div className="forge-board-area">
@@ -1773,6 +1868,11 @@ export default function Forge({
                   p.roads.map(([a, b]) => (
                     <g
                       key={`${i}-${a}-${b}`}
+                      className={
+                        animatedPlacements.has(roadPlacementKey(i, a, b))
+                          ? "forge-piece-landing forge-road-landing"
+                          : undefined
+                      }
                       strokeLinecap="round"
                       pointerEvents="none"
                     >
@@ -1853,6 +1953,29 @@ export default function Forge({
                   );
                   const city =
                     owner >= 0 && game.players[owner].cities.includes(v.id);
+                  const selectCorner = (trigger: SVGElement) => {
+                    if (owner < 0) {
+                      choose(v.id, undefined, trigger);
+                      return;
+                    }
+                    if (sound)
+                      soundCue(city ? "citySelect" : "settlementSelect");
+                    if (botTurn || game.phase !== "build") return;
+                    if (selectedBuilding) {
+                      const option = buildAvailability.find(
+                        (item) => item.building === selectedBuilding,
+                      );
+                      const valid =
+                        option?.available &&
+                        (selectedBuilding === "road"
+                          ? option.edges.some(
+                              ([a, b]) => a === v.id || b === v.id,
+                            )
+                          : option.corners.includes(v.id));
+                      if (!valid) return;
+                    }
+                    choose(v.id, undefined, trigger, true);
+                  };
                   const available =
                     !botTurn &&
                     (game.phase === "setup"
@@ -1894,13 +2017,11 @@ export default function Forge({
                         role="button"
                         tabIndex={0}
                         aria-label={`Corner ${v.id + 1}${owner >= 0 ? `, player ${owner + 1} ${city ? "city" : "settlement"}` : game.phase === "setup" && available ? ", available starting location" : ""}`}
-                        onClick={(event) =>
-                          choose(v.id, undefined, event.currentTarget)
-                        }
+                        onClick={(event) => selectCorner(event.currentTarget)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            choose(v.id, undefined, e.currentTarget);
+                            selectCorner(e.currentTarget);
                           }
                         }}
                       />
@@ -1909,8 +2030,35 @@ export default function Forge({
                           pointerEvents="none"
                           transform={`translate(${240 + v.x * 45} ${185 + v.y * 45}) scale(1.3)`}
                         >
-                          <BuildingArt city={city} owner={owner} />
+                          <g
+                            className={
+                              animatedPlacements.has(
+                                `${city ? "city" : "settlement"}:${owner}:${v.id}`,
+                              )
+                                ? `forge-piece-landing forge-${city ? "city" : "settlement"}-landing`
+                                : undefined
+                            }
+                          >
+                            <BuildingArt city={city} owner={owner} />
+                          </g>
                         </g>
+                      )}
+                      {owner >= 0 && (
+                        <ellipse
+                          cx={240 + v.x * 45}
+                          cy={182 + v.y * 45}
+                          rx="13"
+                          ry={city ? 17 : 14}
+                          fill="transparent"
+                          aria-hidden="true"
+                          onClick={(event) => {
+                            const corner =
+                              event.currentTarget.parentElement?.querySelector<SVGCircleElement>(
+                                'circle[role="button"]',
+                              );
+                            selectCorner(corner ?? event.currentTarget);
+                          }}
+                        />
                       )}
                     </g>
                   );
@@ -1969,11 +2117,15 @@ export default function Forge({
             <div className="scoreboard">
               {game.players.map((_, i) => (
                 <div key={i}>
-                  <small title={playerNames[i]}>
-                    {playerNames[i]}
-                    {opponent === "bot" && i === 1 ? " · BOT" : ""}
-                    {opponent !== "hotseat" && i === handPlayer ? " · YOU" : ""}
-                    {game.phase !== "end" && game.turn === i ? " · TURN" : ""}
+                  <ForgeScoreName name={playerNames[i]} />
+                  <small className="forge-score-status">
+                    {[
+                      opponent === "bot" && i === 1 ? "BOT" : "",
+                      opponent !== "hotseat" && i === handPlayer ? "YOU" : "",
+                      game.phase !== "end" && game.turn === i ? "TURN" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "\u00a0"}
                   </small>
                   <strong>
                     {totalPoints(game, i as 0 | 1)} <small>/ 5 VP</small>
@@ -2078,6 +2230,10 @@ export default function Forge({
                   game={game}
                   bot={opponent === "bot"}
                   hideTrade={opponent === "online"}
+                  bankPending={
+                    opponent === "online" &&
+                    (!online?.connected || online.pending)
+                  }
                   onBank={tradeWithBank}
                   onTrade={tradeWithPlayer}
                   onCue={(cue: Cue) => {
