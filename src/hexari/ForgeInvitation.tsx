@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import BrandMark from "../shared/BrandMark";
+import { forgeHref } from "../shared/navigation";
 
 export default function ForgeInvitation() {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -23,7 +24,7 @@ export default function ForgeInvitation() {
       <div className="forge-invitation-actions">
         <a
           className="button primary"
-          href="/forge"
+          href={forgeHref()}
           target="_blank"
           rel="noopener noreferrer"
           onClick={() => dialog.current?.close()}

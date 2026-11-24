@@ -11,6 +11,7 @@ the source of each sound clear.
 - `leaves.ogg`: Augmentality (Brandon Morris), [Random Sounds Samples](https://opengameart.org/content/random-sounds-samples), used under the CC0 option.
 - `victory.ogg`: ARoachIFoundOnMyPillow, [Victory Fanfare](https://opengameart.org/content/victory-fanfare).
 - `defeat.ogg`: Robin Lamb, [Lose Game Short Music Clip](https://opengameart.org/content/lose-game-short-music-clip).
+- `crowd-cheer.ogg` and `game-over.ogg`: SpritePilot, [Free Game Over and Victory Sound Effects](https://spritepilot.com/free-game-assets/sound-effects/moments).
 - `welcome-music.ogg`: KiluaBoy, [Sunset Walk](https://opengameart.org/content/sunset-walk-ambient-quiet-sweet-loop).
 - `crowded-pub.ogg`: Bobjt, [Crowded Pub](https://opengameart.org/content/crowded-pub), 2025 loop.
 

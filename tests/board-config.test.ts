@@ -111,6 +111,15 @@ describe("editable board ports", () => {
       ).toBeNull();
     }
   });
+  it("rejects shared boards whose number tokens are strings", () => {
+    const board = defaultBoard.map((tile) => ({ ...tile }));
+    const malformed = board.map((tile, index) =>
+      index === 0 ? { ...tile, number: String(tile.number) } : tile,
+    );
+    const legacy = btoa(JSON.stringify(malformed));
+    expect(decodeBoard(legacy)).toBeNull();
+    expect(decodeBoardConfig(legacy)).toBeNull();
+  });
 });
 describe("four-seat draft balancing", () => {
   it.each([7, 19, 51, 123, 421, 900, 1024, 2026, 4096, 8191, 32749, 65521])(

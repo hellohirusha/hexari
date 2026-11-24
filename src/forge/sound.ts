@@ -4,6 +4,8 @@ export type Cue =
   | "road"
   | "settlement"
   | "city"
+  | "settlementSelect"
+  | "citySelect"
   | "trade"
   | "bank"
   | "discard"
@@ -35,7 +37,15 @@ export const cueFiles: Record<Cue, string> = {
     import.meta.url,
   ).href,
   city: new URL(
-    "./assets/audio/impact-sounds_impactWood_heavy_000.ogg",
+    "./assets/audio/impact-sounds_impactPlate_medium_000.ogg",
+    import.meta.url,
+  ).href,
+  settlementSelect: new URL(
+    "./assets/audio/impact-sounds_impactWood_light_000.ogg",
+    import.meta.url,
+  ).href,
+  citySelect: new URL(
+    "./assets/audio/impact-sounds_impactPlate_medium_000.ogg",
     import.meta.url,
   ).href,
   trade: new URL(
@@ -50,8 +60,8 @@ export const cueFiles: Record<Cue, string> = {
   ).href,
   turn: new URL("./assets/audio/casino-audio_card-slide-4.ogg", import.meta.url)
     .href,
-  win: new URL("./assets/audio/victory.ogg", import.meta.url).href,
-  lose: new URL("./assets/audio/defeat.ogg", import.meta.url).href,
+  win: new URL("./assets/audio/crowd-cheer.ogg", import.meta.url).href,
+  lose: new URL("./assets/audio/game-over.ogg", import.meta.url).href,
   blocked: new URL(
     "./assets/audio/impact-sounds_impactGeneric_light_000.ogg",
     import.meta.url,
@@ -85,13 +95,21 @@ const welcomeMusic = new URL("./assets/audio/crowded-pub.ogg", import.meta.url)
   .href;
 const resultMusic = new URL("./assets/audio/welcome-music.ogg", import.meta.url)
   .href;
-const playingEffects = new Map<HTMLAudioElement, number>();
+type PlayingEffect = { baseVolume: number; finish: () => void };
+const playingEffects = new Map<HTMLAudioElement, PlayingEffect>();
+const preparedPlacements = new Map<Cue, HTMLAudioElement>();
+const preparedResults = new Map<"win" | "lose", HTMLAudioElement>();
 const scheduledEffects = new Set<ReturnType<typeof setTimeout>>();
 let backgroundMusic: HTMLAudioElement | null = null;
 const musicVolume = 0.45;
 const musicDuckedVolume = 0.16;
 let masterVolume = 1;
 const volumes: Partial<Record<Cue, number>> = {
+  road: 0.75,
+  settlement: 0.85,
+  city: 0.85,
+  settlementSelect: 0.6,
+  citySelect: 0.65,
   sheep: 0.35,
   wheat: 0.4,
   ore: 0.45,
@@ -100,21 +118,67 @@ const volumes: Partial<Record<Cue, number>> = {
   timeout: 0.35,
 };
 
+/** Prepare board feedback sounds before they are needed, without playing them. */
+export function preparePlacementSounds() {
+  for (const cue of [
+    "road",
+    "settlement",
+    "city",
+    "settlementSelect",
+    "citySelect",
+  ] as const) {
+    if (preparedPlacements.has(cue)) continue;
+    try {
+      const audio = new Audio(cueFiles[cue]);
+      audio.preload = "auto";
+      audio.load();
+      preparedPlacements.set(cue, audio);
+    } catch {
+      // Playback remains best-effort if preparation is unavailable.
+    }
+  }
+}
+
+/** Load the short outcome cues before the result screen appears. */
+export function prepareResultSounds() {
+  for (const outcome of ["win", "lose"] as const) {
+    if (preparedResults.has(outcome)) continue;
+    try {
+      const audio = new Audio(cueFiles[outcome]);
+      audio.preload = "auto";
+      audio.load();
+      preparedResults.set(outcome, audio);
+    } catch {
+      // The result sequence can still create a player when needed.
+    }
+  }
+}
+
 /** Playback is best-effort; a blocked or missing audio device must not interrupt play. */
 export function soundCue(kind: Cue) {
   let finish = () => {};
   try {
-    const audio = new Audio(cueFiles[kind]);
+    const prepared = preparedPlacements.get(kind);
+    const audio =
+      prepared && !playingEffects.has(prepared)
+        ? prepared
+        : new Audio(cueFiles[kind]);
+    if (audio.currentTime) audio.currentTime = 0;
     const baseVolume = volumes[kind] ?? 0.55;
     audio.volume = baseVolume * masterVolume;
-    playingEffects.set(audio, baseVolume);
+    const effect: PlayingEffect = { baseVolume, finish: () => {} };
+    playingEffects.set(audio, effect);
     if (backgroundMusic)
       backgroundMusic.volume = musicDuckedVolume * masterVolume;
     finish = () => {
+      if (playingEffects.get(audio) !== effect) return;
+      audio.removeEventListener("ended", finish);
+      audio.removeEventListener("error", finish);
       playingEffects.delete(audio);
       if (backgroundMusic && playingEffects.size === 0)
         backgroundMusic.volume = musicVolume * masterVolume;
     };
+    effect.finish = finish;
     audio.addEventListener("ended", finish, { once: true });
     audio.addEventListener("error", finish, { once: true });
     void audio.play().catch(finish);
@@ -125,8 +189,8 @@ export function soundCue(kind: Cue) {
 
 export function setMasterVolume(volume: number) {
   masterVolume = Math.max(0, Math.min(1, volume));
-  for (const [audio, base] of playingEffects)
-    audio.volume = base * masterVolume;
+  for (const [audio, effect] of playingEffects)
+    audio.volume = effect.baseVolume * masterVolume;
   if (backgroundMusic)
     backgroundMusic.volume =
       (playingEffects.size ? musicDuckedVolume : musicVolume) * masterVolume;
@@ -143,8 +207,10 @@ export function scheduleSoundCue(kind: Cue, delay: number) {
 export function stopSoundEffects() {
   for (const timer of scheduledEffects) clearTimeout(timer);
   scheduledEffects.clear();
-  for (const audio of playingEffects.keys()) audio.pause();
-  playingEffects.clear();
+  for (const [audio, effect] of playingEffects) {
+    audio.pause();
+    effect.finish();
+  }
   if (backgroundMusic) backgroundMusic.volume = musicVolume * masterVolume;
 }
 
@@ -224,4 +290,73 @@ export function startResultMusic(
   onStatus: (status: WelcomeMusicStatus) => void = () => {},
 ): WelcomeMusicPlayer {
   return startMusic(resultMusic, onStatus);
+}
+
+/** Select the result sound from the local player's perspective. */
+export function resultSound(
+  winner: number,
+  opponent: "bot" | "hotseat" | "online",
+  seat?: number,
+): "win" | "lose" | null {
+  if (opponent === "hotseat") return "win";
+  if (opponent === "online" && seat === undefined) return null;
+  const player = opponent === "bot" ? 0 : seat;
+  return winner === player ? "win" : "lose";
+}
+
+/** Play a brief result cue before starting the result-screen ambience. */
+export function startResultAudio(outcome: "win" | "lose"): WelcomeMusicPlayer {
+  let active = true;
+  let music: WelcomeMusicPlayer | null = null;
+  let cue: HTMLAudioElement | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let effect: PlayingEffect | null = null;
+
+  const clearCue = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (!cue) return;
+    cue.removeEventListener("ended", finishCue);
+    cue.removeEventListener("error", finishCue);
+    cue.pause();
+    if (playingEffects.get(cue) === effect) playingEffects.delete(cue);
+    cue = null;
+    effect = null;
+  };
+  const finishCue = () => {
+    if (!active || !cue) return;
+    clearCue();
+    music = startResultMusic();
+  };
+
+  try {
+    const prepared = preparedResults.get(outcome);
+    cue =
+      prepared && !playingEffects.has(prepared)
+        ? prepared
+        : new Audio(cueFiles[outcome]);
+    const current = cue;
+    if (current.currentTime) current.currentTime = 0;
+    const baseVolume = volumes[outcome] ?? 0.55;
+    current.volume = baseVolume * masterVolume;
+    effect = { baseVolume, finish: clearCue };
+    playingEffects.set(current, effect);
+    current.addEventListener("ended", finishCue, { once: true });
+    current.addEventListener("error", finishCue, { once: true });
+    // Don't leave the result silent indefinitely if the audio never ends.
+    timer = setTimeout(finishCue, 8000);
+    void current.play().catch(finishCue);
+  } catch {
+    clearCue();
+    if (active) music = startResultMusic();
+  }
+
+  return {
+    play: () => music?.play(),
+    stop: () => {
+      active = false;
+      clearCue();
+      music?.stop();
+    },
+  };
 }

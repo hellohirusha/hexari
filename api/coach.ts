@@ -52,8 +52,8 @@ export default async function handler(req: Request, res: Response) {
   }
   const contentType = req.headers?.["content-type"];
   if (
-    typeof contentType === "string" &&
-    !contentType.toLowerCase().startsWith("application/json")
+    typeof contentType !== "string" ||
+    contentType.split(";", 1)[0].trim().toLowerCase() !== "application/json"
   ) {
     res.status(415).json({ error: "Use JSON for coach requests." });
     return;
@@ -73,6 +73,10 @@ export default async function handler(req: Request, res: Response) {
   const state = req.body;
   if (!state || typeof state !== "object" || Array.isArray(state)) {
     res.status(400).json({ error: "A structured game state is required." });
+    return;
+  }
+  if (JSON.stringify(state).length > 12000) {
+    res.status(400).json({ error: "Invalid or oversized game state." });
     return;
   }
   const fields = state as Record<string, unknown>;
@@ -133,11 +137,44 @@ export default async function handler(req: Request, res: Response) {
     res.status(400).json({ error: "Invalid game state." });
     return;
   }
-  const input = JSON.stringify(state);
-  if (input.length > 12000) {
-    res.status(400).json({ error: "Invalid or oversized game state." });
-    return;
-  }
+  // Only documented game state belongs in the provider prompt. Ignore extra
+  // client-supplied properties, including nested ones, to reduce unintended
+  // data disclosure and avoid giving hidden fields influence over the model.
+  const input = JSON.stringify({
+    board: (fields.board as Record<string, unknown>[]).map(
+      ({ resource, number }) => ({ resource, number }),
+    ),
+    ...(fields.ports === undefined
+      ? {}
+      : {
+          ports: (fields.ports as Record<string, unknown>[]).map(
+            ({ vertex, otherVertex, resource, rate }) => ({
+              vertex,
+              otherVertex,
+              resource,
+              rate,
+            }),
+          ),
+        }),
+    question: fields.question,
+    turn: fields.turn,
+    vp: fields.vp,
+    hand: Object.fromEntries(
+      ["wood", "brick", "wheat", "ore", "sheep"].map((resource) => [
+        resource,
+        (fields.hand as Record<string, unknown>)[resource],
+      ]),
+    ),
+    buildings: fields.buildings,
+    opponents: fields.opponents,
+    ...(fields.history === undefined
+      ? {}
+      : {
+          history: (fields.history as Record<string, unknown>[]).map(
+            ({ question, advice }) => ({ question, advice }),
+          ),
+        }),
+  });
   const forwarded = env.VERCEL
     ? req.headers?.["x-vercel-forwarded-for"]
     : undefined;
@@ -236,14 +273,19 @@ export default async function handler(req: Request, res: Response) {
       });
       return;
     }
-    const data: unknown = await response.json();
-    const d = data as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
-    };
-    const advice = formatCoachAdvice(
-      d.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ??
-        "",
-    );
+    let advice = "";
+    try {
+      const data: unknown = await response.json();
+      const d = data as {
+        candidates?: { content?: { parts?: { text?: string }[] } }[];
+      } | null;
+      advice = formatCoachAdvice(
+        d?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ??
+          "",
+      );
+    } catch {
+      // A malformed successful response is equivalent to receiving no advice.
+    }
     if (!advice) {
       if (env.GROQ_API_KEY && (await sendBackup())) return;
       res.status(502).json({ error: "The model returned no advice." });

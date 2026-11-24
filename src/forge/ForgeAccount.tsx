@@ -1,6 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
-import { accountRedirect, loadAccountClient, validPlayerName } from "./account";
+import {
+  accountRedirect,
+  loadAccountClient,
+  refreshAfterSignupConfirmation,
+  rememberPendingSignup,
+  validPlayerName,
+} from "./account";
 
 type Mode = "signin" | "register" | "forgot";
 
@@ -11,7 +17,11 @@ function clearAccountPurpose(purpose: "confirm" | "recovery") {
   window.history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 
-export default function ForgeAccount() {
+export default function ForgeAccount({
+  canReloadAfterConfirmation = () => true,
+}: {
+  canReloadAfterConfirmation?: () => boolean;
+}) {
   const [client, setClient] = useState<SupabaseClient | null>(null);
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
@@ -30,6 +40,7 @@ export default function ForgeAccount() {
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
+    let authVersion = 0;
     void loadAccountClient()
       .then(async (instance) => {
         if (!active) return;
@@ -37,6 +48,7 @@ export default function ForgeAccount() {
         if (instance) {
           const { data } = instance.auth.onAuthStateChange((event, next) => {
             if (!active) return;
+            authVersion++;
             setSession(next);
             if (event === "PASSWORD_RECOVERY") setRecovering(true);
             if (event === "SIGNED_OUT") setRecovering(false);
@@ -44,11 +56,12 @@ export default function ForgeAccount() {
               clearAccountPurpose("confirm");
           });
           unsubscribe = () => data.subscription.unsubscribe();
+          const version = authVersion;
           const result = await instance.auth.getSession();
           if (!active) return;
           if (result.error)
             setMessage("Could not load your account. Try reopening settings.");
-          setSession(result.data.session);
+          if (version === authVersion) setSession(result.data.session);
         }
         if (active) setLoading(false);
       })
@@ -125,6 +138,21 @@ export default function ForgeAccount() {
         if (result.error) setMessage(result.error.message);
         else {
           setPassword("");
+          if (mode === "register" && !result.data.session) {
+            try {
+              rememberPendingSignup(email, window.sessionStorage);
+              // The email may have been confirmed before signUp resolved.
+              const current = await client.auth.getSession();
+              if (!current.error)
+                refreshAfterSignupConfirmation(
+                  "SIGNED_IN",
+                  current.data.session,
+                  canReloadAfterConfirmation,
+                );
+            } catch {
+              // Confirmation can still update the account through auth events.
+            }
+          }
           setMessage(
             result.data.session
               ? "Signed in."
@@ -344,7 +372,11 @@ export default function ForgeAccount() {
           />
         </label>
       )}
-      <button type="submit" className="button primary" disabled={busy}>
+      <button
+        type="submit"
+        className="button primary forge-account-submit"
+        disabled={busy}
+      >
         {busy
           ? "Please wait..."
           : mode === "signin"
@@ -356,7 +388,7 @@ export default function ForgeAccount() {
       {mode !== "register" && (
         <button
           type="button"
-          className="button ghost"
+          className="button ghost forge-account-secondary"
           disabled={busy}
           onClick={() => changeMode(mode === "forgot" ? "signin" : "forgot")}
         >

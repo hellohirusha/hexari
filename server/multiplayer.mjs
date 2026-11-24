@@ -1,4 +1,4 @@
-/* global structuredClone, console */
+/* global structuredClone, console, setTimeout, clearTimeout */
 import { createServer } from "node:http";
 import { Buffer } from "node:buffer";
 import {
@@ -379,12 +379,27 @@ sockets.on("connection", (socket) => {
   let chatCount = 0;
   let resuming = false;
   let identity = null;
+  let prejoinTimer;
+  let forcedCloseTimer;
+  const armPrejoinDeadline = () => {
+    clearTimeout(prejoinTimer);
+    prejoinTimer = setTimeout(() => {
+      if (room || searching) return;
+      socket.close(1008, "Begin a game or search.");
+      // A malicious client can ignore the close frame, so release the slot.
+      forcedCloseTimer = setTimeout(() => socket.terminate(), 1000);
+      forcedCloseTimer.unref();
+    }, 30000);
+    prejoinTimer.unref();
+  };
   const attach = (nextRoom, nextSeat) => {
+    clearTimeout(prejoinTimer);
     room = nextRoom;
     seat = nextSeat;
     searching = false;
     nextRoom.players[nextSeat] = socket;
   };
+  armPrejoinDeadline();
   socket.alive = true;
   socket.on("pong", () => {
     socket.alive = true;
@@ -412,6 +427,7 @@ sockets.on("connection", (socket) => {
       const index = waiting.findIndex((entry) => entry.socket === socket);
       if (index >= 0) waiting.splice(index, 1);
       searching = false;
+      armPrejoinDeadline();
       send(socket, { type: "search-cancelled" });
       return;
     }
@@ -589,6 +605,7 @@ sockets.on("connection", (socket) => {
             reason: "The matchmaking queue is full.",
           });
         searching = true;
+        clearTimeout(prejoinTimer);
         waiting.push({
           socket,
           attach,
@@ -990,6 +1007,8 @@ sockets.on("connection", (socket) => {
     );
   });
   socket.on("close", () => {
+    clearTimeout(prejoinTimer);
+    clearTimeout(forcedCloseTimer);
     if (searching) {
       const index = waiting.findIndex((entry) => entry.socket === socket);
       if (index >= 0) waiting.splice(index, 1);
@@ -1031,7 +1050,7 @@ setInterval(() => {
           : "The other player did not reconnect in time.",
         recoverable,
         recoverable,
-        recoverable ? undefined : "opponent_timeout",
+        "opponent_timeout",
       );
       continue;
     }

@@ -42,6 +42,85 @@ function inbox(socket) {
 }
 
 test(
+  "idle connections must begin a game or search before the deadline",
+  { timeout: 5000 },
+  async (t) => {
+    // Accelerate only the server's connection deadline for this real socket test.
+    const preloader = `const original = globalThis.setTimeout;
+globalThis.setTimeout = (callback, ms, ...args) => original(callback, ms === 30000 ? 200 : ms, ...args);`;
+    const server = spawn(
+      execPath,
+      [
+        "--import",
+        `data:text/javascript,${encodeURIComponent(preloader)}`,
+        "--experimental-strip-types",
+        "server/multiplayer.mjs",
+      ],
+      {
+        env: {
+          ...env,
+          PORT: "0",
+          SUPABASE_URL: "",
+          SUPABASE_SECRET_KEY: "",
+          FORGE_ALLOWED_ORIGINS: "http://localhost:5173",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    t.after(() => server.kill());
+    const [startup] = await Promise.race([
+      once(server.stdout, "data"),
+      delay(3000).then(() => {
+        throw new Error("Server did not start");
+      }),
+    ]);
+    const port = Number(String(startup).match(/listening on (\d+)/)?.[1]);
+    assert.ok(port > 0);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/forge`, {
+      origin: "http://localhost:5173",
+    });
+    t.after(() => socket.terminate());
+    await once(socket, "open");
+    const closed = once(socket, "close");
+    const [code] = await Promise.race([
+      closed,
+      delay(1000).then(() => {
+        throw new Error("Idle connection was not closed");
+      }),
+    ]);
+    assert.equal(code, 1008);
+
+    const searching = new WebSocket(`ws://127.0.0.1:${port}/forge`, {
+      origin: "http://localhost:5173",
+    });
+    t.after(() => searching.terminate());
+    const next = inbox(searching);
+    await once(searching, "open");
+    searching.send(JSON.stringify({ type: "findMatch" }));
+    await next("waiting");
+    await delay(400);
+    assert.equal(
+      searching.readyState,
+      WebSocket.OPEN,
+      "Searching players remain connected",
+    );
+    const searchingClosed = once(searching, "close");
+    searching.send(JSON.stringify({ type: "cancelSearch" }));
+    await next("search-cancelled");
+    const [cancelCode] = await Promise.race([
+      searchingClosed,
+      delay(1000).then(() => {
+        throw new Error(
+          "Cancelled search did not restore the connection deadline",
+        );
+      }),
+    ]);
+    assert.equal(cancelCode, 1008);
+  },
+);
+
+test(
   "two matched players choose starting settlements and play an online game to victory",
   { timeout: 120000 },
   async (t) => {
@@ -617,6 +696,30 @@ test(
       }),
     );
     assert.equal((await resumed.next("state")).session.revision, 1);
+
+    // A tab or browser can disappear without sending a graceful close frame.
+    // The remaining player must be notified and the seat must remain resumable.
+    first.socket.terminate();
+    await resumed.next("peer-disconnected");
+    const reconnected = connect();
+    await once(reconnected.socket, "open");
+    reconnected.socket.send(
+      JSON.stringify({
+        type: "resume",
+        room: firstCredentials.room,
+        token: firstCredentials.token,
+      }),
+    );
+    await reconnected.next("credentials");
+    await resumed.next("peer-reconnected");
+    assert.equal((await reconnected.next("state")).session.revision, 1);
+    assert.equal((await resumed.next("state")).session.revision, 1);
+
+    // The remaining player can leave while waiting instead of being stuck.
+    resumed.socket.terminate();
+    await reconnected.next("peer-disconnected");
+    reconnected.socket.send(JSON.stringify({ type: "leave" }));
+    assert.equal((await reconnected.next("closed")).code, "opponent_left");
   },
 );
 

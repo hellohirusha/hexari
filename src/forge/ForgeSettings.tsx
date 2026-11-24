@@ -16,6 +16,7 @@ export default function ForgeSettings({
   onClose,
   initialPage = "Settings",
   timerRunning = true,
+  canReloadAfterConfirmation,
 }: {
   sound: boolean;
   onSound: () => void;
@@ -28,6 +29,7 @@ export default function ForgeSettings({
   onClose: () => void;
   initialPage?: "Settings" | "Account";
   timerRunning?: boolean;
+  canReloadAfterConfirmation?: () => boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [page, setPage] = useState<Page>(initialPage);
@@ -39,7 +41,7 @@ export default function ForgeSettings({
   return (
     <dialog
       ref={dialog}
-      className="forge-confirm forge-settings"
+      className={`forge-confirm forge-settings${page === "Account" ? " forge-settings-account" : ""}`}
       aria-labelledby="forge-settings-title"
       onCancel={(event) => {
         event.preventDefault();
@@ -205,7 +207,9 @@ export default function ForgeSettings({
           </p>
         </div>
       )}
-      {page === "Account" && <ForgeAccount />}
+      {page === "Account" && (
+        <ForgeAccount canReloadAfterConfirmation={canReloadAfterConfirmation} />
+      )}
       {timerRunning && (
         <p className="forge-settings-note">
           The turn timer continues while settings are open.

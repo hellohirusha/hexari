@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import handler from "../api/coach";
+import coachHandler from "../api/coach";
 import { defaultBoard, ports } from "../src/shared/board";
-import { emptyHand } from "../src/forge/engine";
+import { emptyHand, newGame } from "../src/forge/engine";
+import { forgeCoachState } from "../src/forge/coachContext";
 
 const state = () => ({
   board: defaultBoard,
@@ -13,6 +14,14 @@ const state = () => ({
   opponents: "",
   history: [],
 });
+const handler = (
+  req: Parameters<typeof coachHandler>[0],
+  res: Parameters<typeof coachHandler>[1],
+) =>
+  coachHandler(
+    { ...req, headers: { "content-type": "application/json", ...req.headers } },
+    res,
+  );
 function response() {
   const result = {
     code: 0,
@@ -42,6 +51,99 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("coach endpoint", () => {
+  it("preserves the actual Forge game context in the provider prompt", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GROQ_API_KEY", "");
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "Build a road." }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const context = forgeCoachState(newGame(0), "What should I build?", [
+      { question: "How do I catch up?", advice: "Build a road." },
+    ]);
+    const { res, result } = response();
+    await handler({ method: "POST", body: context }, res);
+    expect(result.code).toBe(200);
+    const providerBody = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    const prompt = providerBody.contents[0].parts[0].text as string;
+    expect(JSON.parse(prompt.split("Game state: ")[1])).toEqual(context);
+  });
+  it("rejects unsupported or missing request media types before contacting a provider", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const contentType of ["application/jsonp", "text/plain", undefined]) {
+      const { res, result } = response();
+      await coachHandler(
+        {
+          method: "POST",
+          body: state(),
+          headers: { "content-type": contentType },
+        },
+        res,
+      );
+      expect(result.code).toBe(415);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("accepts JSON with a charset parameter", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GROQ_API_KEY", "");
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "Build a road." }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { res, result } = response();
+    await coachHandler(
+      {
+        method: "POST",
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: state(),
+      },
+      res,
+    );
+    expect(result.code).toBe(200);
+  });
+  it("does not forward unrecognized request fields to the provider", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GROQ_API_KEY", "");
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "Build a road." }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { res, result } = response();
+    await handler(
+      {
+        method: "POST",
+        body: {
+          ...state(),
+          arbitraryInstruction: "unrecognized secret marker",
+          board: defaultBoard.map((tile, i) =>
+            i ? tile : { ...tile, private: "unrecognized tile marker" },
+          ),
+          hand: { ...emptyHand(), private: "unrecognized hand marker" },
+          history: [
+            {
+              question: "Build?",
+              advice: "Road.",
+              private: "unrecognized history marker",
+            },
+          ],
+        },
+      },
+      res,
+    );
+    expect(result.code).toBe(200);
+    const providerBody = String(fetchMock.mock.calls[0][1].body);
+    expect(providerBody).not.toContain("unrecognized");
+    expect(providerBody).toContain("Build?");
+  });
   it("limits repeated requests before contacting a provider", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
     vi.stubEnv("GROQ_API_KEY", "");
@@ -430,6 +532,48 @@ describe("coach endpoint", () => {
     await handler({ method: "POST", body: state() }, res);
     expect(result.body).toEqual({ advice: "Build a road." });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it.each(["invalid JSON", "null JSON"])(
+    "uses the backup when Gemini returns %s",
+    async (kind) => {
+      vi.stubEnv("GEMINI_API_KEY", "test-key");
+      vi.stubEnv("GROQ_API_KEY", "backup-key");
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(kind === "invalid JSON" ? "{" : "null"),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            choices: [{ message: { content: "Build a road." } }],
+          }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+      const { res, result } = response();
+      await handler({ method: "POST", body: state() }, res);
+      expect(result.code).toBe(200);
+      expect(result.body).toEqual({ advice: "Build a road." });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("uses the streaming backup when Gemini returns no response body", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GROQ_API_KEY", "backup-key");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          'data: {"choices":[{"delta":{"content":"Build a road."}}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { res, result } = response();
+    await handler({ method: "POST", body: { ...state(), stream: true } }, res);
+    expect(result.code).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.chunks.join("")).toContain('"text":"Build a road."');
+    expect(result.chunks.join("")).toContain('"type":"done"');
   });
   it("falls back to Groq on a Gemini service outage", async () => {
     vi.stubEnv("GEMINI_API_KEY", "test-key");
