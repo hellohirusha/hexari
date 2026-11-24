@@ -9,8 +9,6 @@ import {
   scheduleSoundCue,
   setMasterVolume,
   startWelcomeMusic,
-  startResultAudio,
-  resultSound,
   stopSoundEffects,
   type Cue,
   type WelcomeMusicPlayer,
@@ -42,6 +40,7 @@ import ForgeOnlineTrade from "./ForgeOnlineTrade";
 import type { OnlineCommand, OnlineSession, Seat } from "./online/session";
 import { isOpponentDeparture } from "./online/opponentDeparture";
 import { linkOnlineAccount } from "./online/accountLink";
+import { reconnectOnlineGame } from "./online/lobbyConnection";
 import { FONT_SIZE_KEY, readFontSize } from "./fontSize";
 import ForgeSettings from "./ForgeSettings";
 import ForgePause from "./ForgePause";
@@ -50,6 +49,7 @@ import ForgeOpponentLeftNotice from "./ForgeOpponentLeftNotice";
 import ForgeBuildPopover from "./ForgeBuildPopover";
 import ForgeBuildCards from "./ForgeBuildCards";
 import { placementSound } from "./placementSound";
+import { useResultAudio } from "./useResultAudio";
 import { buildKinds, buildOptions } from "./buildOptions";
 import { parseResumableGame } from "./savedGame";
 import { watchFocusLoss } from "./focusPause";
@@ -115,14 +115,11 @@ function storedList<T>(
 }
 function restore(): Game {
   try {
-    return (
-      parseResumableGame(localStorage.getItem(key)) ??
-      newGame(undefined, { manualSetup: true })
-    );
+    return parseResumableGame(localStorage.getItem(key)) ?? newGame();
   } catch {
     /* start fresh */
   }
-  return newGame(undefined, { manualSetup: true });
+  return newGame();
 }
 export default function Forge({
   standalone = false,
@@ -302,6 +299,7 @@ export default function Forge({
   const [startNewOnline, setStartNewOnline] = useState(false);
   const onlineSocket = useRef<WebSocket | null>(null);
   const onlineRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelOnlineReconnect = useRef<(() => void) | null>(null);
   const onlineRef = useRef(online);
   useEffect(() => {
     const accountId = account.id;
@@ -348,6 +346,8 @@ export default function Forge({
   useEffect(
     () => () => {
       if (onlineRetry.current) clearTimeout(onlineRetry.current);
+      cancelOnlineReconnect.current?.();
+      cancelOnlineReconnect.current = null;
       for (const pending of pendingChats.current.values()) {
         clearTimeout(pending.timer);
         pending.resolve(false);
@@ -727,10 +727,20 @@ export default function Forge({
           if (!onlineRef.current) return;
           const credentials = onlineCredentials();
           if (!credentials) return;
-          const next = new WebSocket(activeSocket.url);
-          bind(next);
-          next.onopen = () =>
-            next.send(JSON.stringify({ type: "resume", ...credentials }));
+          cancelOnlineReconnect.current = reconnectOnlineGame({
+            address: activeSocket.url,
+            credentials,
+            bind,
+            onRetry: () => setMessage("Connection lost. Reconnecting..."),
+            onFailure: () => {
+              if (!onlineRef.current) return;
+              onlineRef.current = { ...onlineRef.current, recoverable: true };
+              setOnline(onlineRef.current);
+              setMessage(
+                "The connection could not be restored. Resume the game to try again.",
+              );
+            },
+          });
         }, 1500);
       };
       activeSocket.onerror = () => activeSocket.close();
@@ -791,29 +801,14 @@ export default function Forge({
       if (welcomeMusicRef.current === player) welcomeMusicRef.current = null;
     };
   }, [started, sound]);
-  const resultSeat = online?.seat;
-  useEffect(() => {
-    if (
-      !started ||
-      !sound ||
-      game.phase !== "end" ||
-      game.winner === null ||
-      resultDismissed
-    )
-      return;
-    const outcome = resultSound(game.winner, opponent, resultSeat);
-    if (!outcome) return;
-    const player = startResultAudio(outcome);
-    return () => player.stop();
-  }, [
+  useResultAudio({
     started,
     sound,
-    game.phase,
-    game.winner,
-    resultDismissed,
+    phase: game.phase,
+    winner: game.winner,
     opponent,
-    resultSeat,
-  ]);
+    seat: online?.seat,
+  });
   // Attempt playback inside the leave interaction before React paints the welcome screen.
   function startWelcomeOnReturn() {
     if (sound && !welcomeMusicRef.current)
@@ -831,7 +826,7 @@ export default function Forge({
     if (rollEffectTimer.current) clearTimeout(rollEffectTimer.current);
     setRollEffect(null);
     setResultDismissed(false);
-    const fresh = newGame(now, { manualSetup: true });
+    const fresh = newGame(now);
     gameRef.current = fresh;
     setGame(fresh);
     setClock(now);
@@ -1178,6 +1173,8 @@ export default function Forge({
     pendingChats.current.clear();
     pendingOnlineExit.current = null;
     if (onlineRetry.current) clearTimeout(onlineRetry.current);
+    cancelOnlineReconnect.current?.();
+    cancelOnlineReconnect.current = null;
     if (onlineSocket.current) onlineSocket.current.onclose = null;
     onlineSocket.current?.close();
     onlineSocket.current = null;
