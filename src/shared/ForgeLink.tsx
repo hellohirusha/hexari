@@ -1,10 +1,11 @@
 import BrandMark from "./BrandMark";
+import { forgeHref } from "./navigation";
 
 export default function ForgeLink() {
   return (
     <a
       className="button ghost forge-link"
-      href="/forge"
+      href={forgeHref()}
       target="_blank"
       rel="noopener noreferrer"
     >
