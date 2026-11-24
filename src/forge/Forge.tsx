@@ -2081,15 +2081,6 @@ export default function Forge({
         <div className="forge-side">
           <div className="panel forge-controls">
             <div className="section-kicker">CURRENT TURN</div>
-            {game.phase === "end" && resultDismissed && (
-              <button
-                type="button"
-                className="button ghost forge-show-result"
-                onClick={() => setResultDismissed(false)}
-              >
-                View result
-              </button>
-            )}
             <div className="turn-header">
               <h2>
                 {turnLabel(
@@ -2114,6 +2105,15 @@ export default function Forge({
                     ? "Build, trade, or end your turn."
                     : "Start a new game to play again."}
             </p>
+            {game.phase === "end" && resultDismissed && (
+              <button
+                type="button"
+                className="button ghost forge-show-result"
+                onClick={() => setResultDismissed(false)}
+              >
+                View result
+              </button>
+            )}
             <div className="scoreboard">
               {game.players.map((_, i) => (
                 <div key={i}>
