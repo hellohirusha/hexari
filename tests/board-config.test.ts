@@ -144,6 +144,14 @@ describe("four-seat draft balancing", () => {
       if (result.reached) {
         expect(result.board).not.toEqual(defaultBoard);
         expect(result.gap).toBeLessThanOrEqual(3);
+        for (const vertex of vertices) {
+          expect(
+            vertex.tiles.filter((index) => {
+              const number = result.board[index].number;
+              return number === 6 || number === 8;
+            }).length,
+          ).toBeLessThanOrEqual(1);
+        }
       }
     },
   );
