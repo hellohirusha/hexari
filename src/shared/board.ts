@@ -480,7 +480,8 @@ export function decodeBoard(value: string): Tile[] | null {
         (t) =>
           t &&
           resources.includes(t.resource) &&
-          (t.number === null || Object.hasOwn(pips, t.number)),
+          (t.number === null ||
+            (typeof t.number === "number" && Object.hasOwn(pips, t.number))),
       )
     )
       return null;
