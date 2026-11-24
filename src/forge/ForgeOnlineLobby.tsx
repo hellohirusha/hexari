@@ -4,6 +4,7 @@ import { loadAccountClient } from "./account";
 import { validOnlineAddress } from "./online/address";
 import { getOrCreateNickname } from "./nickname";
 import { createForgeInviteUrl } from "./online/invite";
+import { connectLobbyWithRetry } from "./online/lobbyConnection";
 
 export type OnlineConnection = {
   socket: WebSocket;
@@ -42,10 +43,12 @@ export default function ForgeOnlineLobby({
   onClose,
   onReady,
   onAccount,
+  startNew = false,
 }: {
   onClose: () => void;
   onReady: (connection: OnlineConnection) => void;
   onAccount: () => void;
+  startNew?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const ready = useRef(onReady);
@@ -72,8 +75,10 @@ export default function ForgeOnlineLobby({
     !address
       ? "Online server is not configured."
       : validOnlineAddress(address)
-        ? "Finding a player..."
-        : "The online server address must use secure WebSockets.",
+        ? startNew
+          ? "Connecting to your previous game..."
+          : "Finding a player..."
+        : "The online server address is not allowed from this page.",
   );
   const [failed, setFailed] = useState(
     !address || !validOnlineAddress(address),
@@ -82,7 +87,7 @@ export default function ForgeOnlineLobby({
   const [ignoreInvite, setIgnoreInvite] = useState(false);
   const [mode, setMode] = useState<
     "choose" | "resume" | "new" | "search" | "invite" | "joinInvite"
-  >(() => (onlineCredentials() ? "choose" : "search"));
+  >(() => (startNew ? "new" : onlineCredentials() ? "choose" : "search"));
   useEffect(() => {
     ready.current = onReady;
   }, [onReady]);
@@ -94,208 +99,214 @@ export default function ForgeOnlineLobby({
   useEffect(() => {
     if (mode === "choose" || !validOnlineAddress(address)) return;
     let active = true;
-    let socket: WebSocket;
+    let openedSocket: WebSocket | null = null;
     let peerConnected = true;
     let receivedError = false;
     let accountGameFound = false;
     let leaveRequested = false;
-    try {
-      socket = new WebSocket(address);
-      candidateSocket.current = socket;
-    } catch {
-      queueMicrotask(() => {
+    const stopConnecting = connectLobbyWithRetry({
+      address,
+      onRetry: () => {
+        if (active) setStatus("Connecting to the multiplayer server...");
+      },
+      onFailure: () => {
         if (active) {
-          setStatus("Invalid multiplayer server address.");
+          setStatus("Could not connect to the multiplayer server.");
           setFailed(true);
         }
-      });
-      return () => {
-        active = false;
-      };
-    }
-    socket.onopen = async () => {
-      const saved = onlineCredentials();
-      try {
-        let accessToken: string | undefined;
-        if (!saved) {
-          const client = await loadAccountClient();
-          const result = await client?.auth.getSession();
-          if (result?.error) throw result.error;
-          accessToken = result?.data.session?.access_token;
-        }
-        if (active && socket.readyState === WebSocket.OPEN)
-          socket.send(
-            JSON.stringify(
-              mode === "invite"
-                ? {
-                    type: "create",
-                    nickname: getOrCreateNickname(),
-                    ...(accessToken ? { accessToken } : {}),
-                  }
-                : saved
-                  ? { type: "resume", ...saved }
-                  : room && !ignoreInvite
+      },
+      onOpen: (connectedSocket) => {
+        openedSocket = connectedSocket;
+        candidateSocket.current = connectedSocket;
+        const socket = connectedSocket;
+        const start = async () => {
+          const saved = onlineCredentials();
+          try {
+            let accessToken: string | undefined;
+            if (!saved) {
+              const client = await loadAccountClient();
+              const result = await client?.auth.getSession();
+              if (result?.error) throw result.error;
+              accessToken = result?.data.session?.access_token;
+            }
+            if (active && socket.readyState === WebSocket.OPEN)
+              socket.send(
+                JSON.stringify(
+                  mode === "invite"
                     ? {
-                        type: "join",
-                        room,
+                        type: "create",
                         nickname: getOrCreateNickname(),
                         ...(accessToken ? { accessToken } : {}),
                       }
-                    : {
-                        type: "findMatch",
-                        nickname: getOrCreateNickname(),
-                        ...(accessToken ? { accessToken } : {}),
-                      },
-            ),
-          );
-      } catch {
-        if (active) {
-          setStatus("Could not load your account. Please sign in again.");
-          setFailed(true);
-        }
-        receivedError = true;
-        socket.close();
-      }
-    };
-    socket.onmessage = (event) => {
-      if (!active) return;
-      try {
-        const data = JSON.parse(String(event.data));
-        if (
-          data.type === "credentials" &&
-          typeof data.room === "string" &&
-          typeof data.token === "string"
-        ) {
-          sessionStorage.setItem(
-            ONLINE_SESSION_KEY,
-            JSON.stringify({ room: data.room, token: data.token }),
-          );
-        } else if (
-          data.type === "created" &&
-          mode === "invite" &&
-          typeof data.room === "string" &&
-          typeof data.nickname === "string"
-        ) {
-          setInviteLink(
-            createForgeInviteUrl(
-              window.location.href,
-              data.room,
-              data.nickname,
-            ),
-          );
-          setStatus("Waiting for your friend to join...");
-        } else if (data.type === "account-game-found") accountGameFound = true;
-        else if (data.type === "peer-disconnected") peerConnected = false;
-        else if (data.type === "peer-reconnected") peerConnected = true;
-        else if (data.type === "waiting") {
-          setSearchReady(true);
-          setStatus("Looking for another player...");
-        } else if (
-          data.type === "search-cancelled" &&
-          switchingToInvite.current
-        ) {
-          switchingToInvite.current = false;
-          setSearchReady(false);
-          setStatus("Creating invite...");
-          setMode("invite");
-        } else if (
-          data.type === "state" &&
-          (data.seat === 0 || data.seat === 1)
-        ) {
-          if (mode === "new" || mode === "joinInvite") {
-            if (!leaveRequested) {
-              leaveRequested = true;
-              setStatus("Leaving your previous game...");
-              socket.send(JSON.stringify({ type: "leave" }));
+                    : saved
+                      ? { type: "resume", ...saved }
+                      : room && !ignoreInvite
+                        ? {
+                            type: "join",
+                            room,
+                            nickname: getOrCreateNickname(),
+                            ...(accessToken ? { accessToken } : {}),
+                          }
+                        : {
+                            type: "findMatch",
+                            nickname: getOrCreateNickname(),
+                            ...(accessToken ? { accessToken } : {}),
+                          },
+                ),
+              );
+          } catch {
+            if (active) {
+              setStatus("Could not load your account. Please sign in again.");
+              setFailed(true);
             }
-            return;
+            receivedError = true;
+            socket.close();
           }
-          if (accountGameFound) {
-            if (abandoningAccountGame.current) return;
-            setAccountGame({
-              socket,
-              seat: data.seat,
-              session: data.session,
-              peerConnected,
-            });
-            return;
+        };
+        socket.onmessage = (event) => {
+          if (!active) return;
+          try {
+            const data = JSON.parse(String(event.data));
+            if (
+              data.type === "credentials" &&
+              typeof data.room === "string" &&
+              typeof data.token === "string"
+            ) {
+              sessionStorage.setItem(
+                ONLINE_SESSION_KEY,
+                JSON.stringify({ room: data.room, token: data.token }),
+              );
+            } else if (
+              data.type === "created" &&
+              mode === "invite" &&
+              typeof data.room === "string" &&
+              typeof data.nickname === "string"
+            ) {
+              setInviteLink(
+                createForgeInviteUrl(
+                  window.location.href,
+                  data.room,
+                  data.nickname,
+                ),
+              );
+              setStatus("Waiting for your friend to join...");
+            } else if (data.type === "account-game-found")
+              accountGameFound = true;
+            else if (data.type === "peer-disconnected") peerConnected = false;
+            else if (data.type === "peer-reconnected") peerConnected = true;
+            else if (data.type === "waiting") {
+              setSearchReady(true);
+              setStatus("Looking for another player...");
+            } else if (
+              data.type === "search-cancelled" &&
+              switchingToInvite.current
+            ) {
+              switchingToInvite.current = false;
+              setSearchReady(false);
+              setStatus("Creating invite...");
+              setMode("invite");
+            } else if (
+              data.type === "state" &&
+              (data.seat === 0 || data.seat === 1)
+            ) {
+              if (mode === "new" || mode === "joinInvite") {
+                if (!leaveRequested) {
+                  leaveRequested = true;
+                  setStatus("Leaving your previous game...");
+                  socket.send(JSON.stringify({ type: "leave" }));
+                }
+                return;
+              }
+              if (accountGameFound) {
+                if (abandoningAccountGame.current) return;
+                setAccountGame({
+                  socket,
+                  seat: data.seat,
+                  session: data.session,
+                  peerConnected,
+                });
+                return;
+              }
+              handedOff.current = true;
+              socket.onmessage = null;
+              ready.current({
+                socket,
+                seat: data.seat,
+                session: data.session,
+                peerConnected,
+              });
+            } else if (
+              data.type === "closed" &&
+              canSearchAfterClosed(
+                mode === "new" ||
+                  mode === "joinInvite" ||
+                  abandoningAccountGame.current,
+                data.code,
+                data.reason,
+              )
+            ) {
+              const joiningInvite =
+                mode === "joinInvite" || joiningInviteAfterLeave.current;
+              receivedError = true;
+              abandoningAccountGame.current = false;
+              joiningInviteAfterLeave.current = false;
+              setAccountGame(null);
+              sessionStorage.removeItem(ONLINE_SESSION_KEY);
+              socket.close();
+              setFailed(false);
+              setStatus("Finding a player...");
+              setIgnoreInvite(!joiningInvite);
+              if (mode === "search") setAttempt((value) => value + 1);
+              else setMode("search");
+            } else if (data.type === "error" || data.type === "closed") {
+              receivedError = true;
+              abandoningAccountGame.current = false;
+              joiningInviteAfterLeave.current = false;
+              setAccountGame(null);
+              if (
+                data.type === "closed" &&
+                typeof data.reason === "string" &&
+                data.reason.includes("no longer available")
+              )
+                sessionStorage.removeItem(ONLINE_SESSION_KEY);
+              setStatus(String(data.reason));
+              setFailed(true);
+              socket.close();
+            }
+          } catch {
+            receivedError = true;
+            setStatus("The multiplayer server sent an invalid response.");
+            setFailed(true);
+            socket.close();
           }
-          handedOff.current = true;
-          socket.onmessage = null;
-          ready.current({
-            socket,
-            seat: data.seat,
-            session: data.session,
-            peerConnected,
-          });
-        } else if (
-          data.type === "closed" &&
-          canSearchAfterClosed(
-            mode === "new" ||
-              mode === "joinInvite" ||
-              abandoningAccountGame.current,
-            data.code,
-            data.reason,
-          )
-        ) {
-          const joiningInvite =
-            mode === "joinInvite" || joiningInviteAfterLeave.current;
-          receivedError = true;
-          abandoningAccountGame.current = false;
-          joiningInviteAfterLeave.current = false;
-          setAccountGame(null);
-          sessionStorage.removeItem(ONLINE_SESSION_KEY);
-          socket.close();
-          setFailed(false);
-          setStatus("Finding a player...");
-          setIgnoreInvite(!joiningInvite);
-          if (mode === "search") setAttempt((value) => value + 1);
-          else setMode("search");
-        } else if (data.type === "error" || data.type === "closed") {
-          receivedError = true;
-          abandoningAccountGame.current = false;
-          joiningInviteAfterLeave.current = false;
-          setAccountGame(null);
-          if (
-            data.type === "closed" &&
-            typeof data.reason === "string" &&
-            data.reason.includes("no longer available")
-          )
-            sessionStorage.removeItem(ONLINE_SESSION_KEY);
-          setStatus(String(data.reason));
-          setFailed(true);
-          socket.close();
-        }
-      } catch {
-        receivedError = true;
-        setStatus("The multiplayer server sent an invalid response.");
-        setFailed(true);
-        socket.close();
-      }
-    };
-    socket.onerror = () => {
-      if (active) {
-        setAccountGame(null);
-        abandoningAccountGame.current = false;
-        joiningInviteAfterLeave.current = false;
-        receivedError = true;
-        setStatus("Could not connect to the multiplayer server.");
-        setFailed(true);
-      }
-    };
-    socket.onclose = () => {
-      if (active && !handedOff.current && !receivedError) {
-        setAccountGame(null);
-        abandoningAccountGame.current = false;
-        joiningInviteAfterLeave.current = false;
-        setStatus("Connection closed. Try again.");
-        setFailed(true);
-      }
-    };
+        };
+        socket.onerror = () => {
+          if (active) {
+            setAccountGame(null);
+            abandoningAccountGame.current = false;
+            joiningInviteAfterLeave.current = false;
+            receivedError = true;
+            setStatus("Could not connect to the multiplayer server.");
+            setFailed(true);
+          }
+        };
+        socket.onclose = () => {
+          if (active && !handedOff.current && !receivedError) {
+            setAccountGame(null);
+            abandoningAccountGame.current = false;
+            joiningInviteAfterLeave.current = false;
+            setStatus("Connection closed. Try again.");
+            setFailed(true);
+          }
+        };
+        void start();
+      },
+    });
     return () => {
       active = false;
+      stopConnecting();
       if (!handedOff.current) {
-        socket.close();
+        openedSocket?.close();
         if (mode === "invite") sessionStorage.removeItem(ONLINE_SESSION_KEY);
       }
     };
