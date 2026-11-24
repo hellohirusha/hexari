@@ -75,3 +75,32 @@ export function connectLobbyWithRetry({
     clearAttempt();
   };
 }
+
+/** Resume a game through the same bounded transport checks as the lobby. */
+export function reconnectOnlineGame({
+  address,
+  credentials,
+  bind,
+  onRetry,
+  onFailure,
+}: {
+  address: string;
+  credentials: { room: string; token: string };
+  bind: (socket: WebSocket) => void;
+  onRetry: () => void;
+  onFailure: () => void;
+}): () => void {
+  return connectLobbyWithRetry({
+    address,
+    onRetry,
+    onFailure,
+    onOpen: (socket) => {
+      bind(socket);
+      try {
+        socket.send(JSON.stringify({ type: "resume", ...credentials }));
+      } catch {
+        socket.close();
+      }
+    },
+  });
+}
