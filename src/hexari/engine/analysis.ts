@@ -397,6 +397,17 @@ export function balanceSeatDraft(
   };
   let best = board.map((t) => ({ ...t }));
   let result = evaluate(best);
+  // The standard randomized layout keeps high-probability tokens apart.
+  // Manual board editing remains unrestricted so real boards can be analyzed.
+  const separatedRedTokens = (candidate: Tile[]) =>
+    vertices.every(
+      (vertex) =>
+        vertex.tiles.filter((index) => {
+          const number = candidate[index]?.number;
+          return number === 6 || number === 8;
+        }).length <= 1,
+    );
+  let foundValid = separatedRedTokens(best);
   let foundDifferent = false;
   let tried = 0;
   const consider = (candidate: Tile[]) => {
@@ -405,20 +416,29 @@ export function balanceSeatDraft(
         tile.resource !== board[index].resource ||
         tile.number !== board[index].number,
     );
-    if (generateNew && !different) return;
+    if ((generateNew && !different) || !separatedRedTokens(candidate)) return;
     const next = evaluate(candidate);
-    if (next.gap < result.gap || (generateNew && !foundDifferent)) {
+    if (
+      !foundValid ||
+      next.gap < result.gap ||
+      (generateNew && !foundDifferent)
+    ) {
       best = candidate;
       result = next;
+      foundValid = true;
       foundDifferent = different;
     }
   };
   while (
     tried < iterations &&
-    (result.gap > threshold || (generateNew && !foundDifferent))
+    (!foundValid || result.gap > threshold || (generateNew && !foundDifferent))
   ) {
     consider(shuffledBoard(board, random));
-    if (result.gap > threshold || (generateNew && !foundDifferent)) {
+    if (
+      !foundValid ||
+      result.gap > threshold ||
+      (generateNew && !foundDifferent)
+    ) {
       const first = tried % board.length;
       const second = (tried * 7 + 1) % board.length;
       consider(swapTiles(best, first, second));
@@ -428,7 +448,8 @@ export function balanceSeatDraft(
   return {
     board: best,
     ...result,
-    reached: result.gap <= threshold && (!generateNew || foundDifferent),
+    reached:
+      foundValid && result.gap <= threshold && (!generateNew || foundDifferent),
     threshold,
     tried,
   };
