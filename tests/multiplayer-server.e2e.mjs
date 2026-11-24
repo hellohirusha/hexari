@@ -10,7 +10,6 @@ import { env, execPath } from "node:process";
 import { URL } from "node:url";
 import WebSocket from "ws";
 import {
-  bestSetupSettlement,
   canAfford,
   costs,
   goods,
@@ -121,7 +120,7 @@ globalThis.setTimeout = (callback, ms, ...args) => original(callback, ms === 300
 );
 
 test(
-  "two matched players choose starting settlements and play an online game to victory",
+  "two matched players start with fixed settlements and play an online game to victory",
   { timeout: 120000 },
   async (t) => {
     // The production server owns dice rolls. This test-only preloader fixes the
@@ -172,11 +171,14 @@ syncBuiltinESMExports();`;
     await clients[0].next("waiting");
     clients[1].socket.send(JSON.stringify({ type: "findMatch" }));
     let states = await Promise.all(clients.map(({ next }) => next("state")));
-    assert.equal(states[0].session.game.phase, "setup");
-    assert.deepEqual(
-      states[0].session.game.players.map((p) => p.settlements),
-      [[], []],
-    );
+    for (const state of states) {
+      assert.equal(state.session.game.phase, "roll");
+      assert.equal(state.session.game.turn, 0);
+      assert.deepEqual(
+        state.session.game.players.map((player) => player.settlements),
+        [[23], [38]],
+      );
+    }
     let commands = 0;
     const play = async (seat, command) => {
       // Stay under the same rate limit imposed on real clients.
@@ -192,16 +194,6 @@ syncBuiltinESMExports();`;
       assert.equal(states[0].session.revision, states[1].session.revision);
       commands++;
     };
-    for (const seat of [0, 1]) {
-      const game = states[seat].session.game;
-      assert.equal(game.turn, seat);
-      await play(seat, {
-        type: "build",
-        building: "settlement",
-        at: bestSetupSettlement(game),
-      });
-    }
-    assert.equal(states[0].session.game.phase, "roll");
     let turns = 0;
     while (states[0].session.game.phase !== "end" && turns < 200) {
       let game = states[0].session.game;
@@ -341,9 +333,9 @@ test(
       assert.equal(initialGuest.session.game.players[0].hand[resource], 0);
     }
     assert.equal((await fetch(`http://127.0.0.1:${port}/ready`)).status, 503);
-    assert.equal(initialHost.session.game.phase, "setup");
-    assert.deepEqual(initialHost.session.game.players[0].settlements, []);
-    assert.deepEqual(initialHost.session.game.players[1].settlements, []);
+    assert.equal(initialHost.session.game.phase, "roll");
+    assert.deepEqual(initialHost.session.game.players[0].settlements, [23]);
+    assert.deepEqual(initialHost.session.game.players[1].settlements, [38]);
     guest.send(
       JSON.stringify({
         type: "command",
@@ -356,24 +348,6 @@ test(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "build", building: "settlement", at: 23 },
-      }),
-    );
-    await hostNext("state");
-    await guestNext("state");
-    guest.send(
-      JSON.stringify({
-        type: "command",
-        revision: 1,
-        command: { type: "build", building: "settlement", at: 38 },
-      }),
-    );
-    await hostNext("state");
-    await guestNext("state");
-    host.send(
-      JSON.stringify({
-        type: "command",
-        revision: 2,
         command: { type: "roll" },
       }),
     );
@@ -393,7 +367,7 @@ test(
     guest.send(
       JSON.stringify({
         type: "command",
-        revision: 3,
+        revision: 1,
         command: { type: "accept" },
       }),
     );
@@ -401,7 +375,7 @@ test(
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 3,
+        revision: 1,
         command: { type: "offer", give: "wood", receive: "ore" },
       }),
     );
@@ -410,7 +384,7 @@ test(
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 4,
+        revision: 2,
         command: { type: "accept" },
       }),
     );
@@ -418,7 +392,7 @@ test(
     guest.send(
       JSON.stringify({
         type: "command",
-        revision: 4,
+        revision: 2,
         command: { type: "accept" },
       }),
     );
@@ -448,7 +422,7 @@ test(
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 5,
+        revision: 3,
         command: { type: "endTurn" },
       }),
     );
@@ -545,7 +519,7 @@ test(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "build", building: "settlement", at: 23 },
+        command: { type: "roll" },
       }),
     );
     await delay(150);
@@ -654,7 +628,7 @@ test(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "build", building: "settlement", at: 23 },
+        command: { type: "roll" },
       }),
     );
     assert.match((await first.next("error")).reason, /reconnect/i);
@@ -692,7 +666,7 @@ test(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "build", building: "settlement", at: 23 },
+        command: { type: "roll" },
       }),
     );
     assert.equal((await resumed.next("state")).session.revision, 1);
@@ -885,7 +859,7 @@ test(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "build", building: "settlement", at: 23 },
+        command: { type: "roll" },
       }),
     );
     assert.equal((await first.next("state")).session.revision, 1);
@@ -973,11 +947,11 @@ test(
     assert.equal(restoredReport.message, "Test message");
     assert.equal(restoredReport.reviewed_at, reviewedAt);
     failRoomWrites = true;
-    restoredSecond.socket.send(
+    restoredFirst.socket.send(
       JSON.stringify({
         type: "command",
         revision: 1,
-        command: { type: "build", building: "settlement", at: 38 },
+        command: { type: "endTurn" },
       }),
     );
     assert.match(
