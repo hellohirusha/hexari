@@ -340,6 +340,15 @@ export default function LiveTracker({
         <p role="status">{message}</p>
       </>
     );
+  const selectActor = (value: string) => {
+    const selected = Number(value);
+    setActor(selected);
+    setOther((previous) =>
+      previous === selected
+        ? (selected + 1) % session.players.length
+        : previous,
+    );
+  };
   return (
     <>
       <h2>Game log</h2>
@@ -413,12 +422,7 @@ export default function LiveTracker({
               <InlineChoices
                 aria-label="Player"
                 value={actor}
-                onChange={(value) => {
-                  const selected = Number(value);
-                  setActor(selected);
-                  if (selected === other)
-                    setOther((selected + 1) % session.players.length);
-                }}
+                onChange={selectActor}
               >
                 {session.players.map((p, i) => (
                   <option value={i} key={i}>
@@ -440,7 +444,7 @@ export default function LiveTracker({
                 onChange={(value) => setOther(Number(value))}
               >
                 {session.players.map((p, i) => (
-                  <option value={i} key={i}>
+                  <option value={i} key={i} disabled={i === actor}>
                     {p.name}
                   </option>
                 ))}
@@ -722,7 +726,7 @@ export default function LiveTracker({
           <InlineChoices
             aria-label="Player to correct"
             value={actor}
-            onChange={(value) => setActor(Number(value))}
+            onChange={selectActor}
           >
             {session.players.map((p, i) => (
               <option value={i} key={i}>
