@@ -96,9 +96,8 @@ export default function ForgeGuide() {
                 <>
                   <p>
                     Choose a bot, share a device, or play online. Each player
-                    chooses a highlighted corner for a free first settlement.
-                    Settlements must be separated by at least one edge. Each
-                    player begins with one of each resource.
+                    begins with a settlement already on the board and one of
+                    each resource.
                   </p>
                   <p>
                     Gold pieces belong to Player 1. Blue pieces belong to Player
