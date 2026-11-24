@@ -286,8 +286,27 @@ export function scoreVertex(
   const port = boardPorts.find(
     (p) => p.vertex === vertex.id || p.otherVertex === vertex.id,
   );
+  // A specialized port retains some future option value, but is more useful
+  // when the opening settlements can already supply the resource it trades.
+  const portSupply =
+    port && port.resource !== "any"
+      ? [
+          ...tiles,
+          ...(first?.tiles.map((i) => board[i]).filter(Boolean) ?? []),
+        ].reduce(
+          (sum, tile) =>
+            sum +
+            (tile.resource === port.resource && tile.number
+              ? (pips[tile.number] ?? 0)
+              : 0),
+          0,
+        )
+      : 0;
   const portBonus = port
-    ? (port.resource === "any" ? 1.5 : 2.5) * (strategy === "port" ? 2 : 1)
+    ? (port.resource === "any"
+        ? 1.5
+        : 1.25 + 1.25 * Math.min(portSupply / 5, 1)) *
+      (strategy === "port" ? 2 : 1)
     : 0;
   return {
     production,
