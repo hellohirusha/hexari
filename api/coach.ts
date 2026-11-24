@@ -261,10 +261,7 @@ export default async function handler(req: Request, res: Response) {
       if (env.GROQ_API_KEY && (await sendBackup())) return;
       throw error;
     }
-    if (
-      (response.status === 429 || response.status >= 500) &&
-      env.GROQ_API_KEY
-    ) {
+    if (!response.ok && env.GROQ_API_KEY) {
       if (await sendBackup()) return;
     }
     if (!response.ok) {
