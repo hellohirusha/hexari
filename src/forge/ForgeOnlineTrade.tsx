@@ -19,6 +19,15 @@ export default function ForgeOnlineTrade({
 }) {
   const [give, setGive] = useState<Goods | null>(null);
   const [receive, setReceive] = useState<Goods | null>(null);
+  const [offerWasPending, setOfferWasPending] = useState(offer !== null);
+  const offerIsPending = offer !== null;
+  if (offerWasPending !== offerIsPending) {
+    setOfferWasPending(offerIsPending);
+    if (!offerIsPending) {
+      setGive(null);
+      setReceive(null);
+    }
+  }
   if (game.phase !== "build") return null;
   if (offer)
     return (
