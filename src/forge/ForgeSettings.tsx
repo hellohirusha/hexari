@@ -118,6 +118,7 @@ export default function ForgeSettings({
             <button
               className="button ghost"
               type="button"
+              aria-label="Sound"
               aria-pressed={sound}
               onClick={onSound}
             >
@@ -160,6 +161,7 @@ export default function ForgeSettings({
             <button
               type="button"
               className="button ghost"
+              aria-label="Keyboard shortcuts"
               aria-pressed={shortcuts}
               onClick={() => onShortcuts(!shortcuts)}
             >
