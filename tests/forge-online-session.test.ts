@@ -14,6 +14,37 @@ const initial = (): OnlineSession => ({
 });
 
 describe("online turn protocol", () => {
+  it("continues a legacy saved game that is still placing settlements", () => {
+    const saved: OnlineSession = {
+      game: newGame(0, { manualSetup: true }),
+      revision: 0,
+      offer: null,
+    };
+    const first = applyOnlineCommand(
+      saved,
+      0,
+      0,
+      { type: "build", building: "settlement", at: 23 },
+      1,
+      roll,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const second = applyOnlineCommand(
+      first.session,
+      1,
+      1,
+      { type: "build", building: "settlement", at: 38 },
+      2,
+      roll,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.session.game.phase).toBe("roll");
+    expect(
+      second.session.game.players.map((player) => player.settlements),
+    ).toEqual([[23], [38]]);
+  });
   it("preserves both nicknames through game actions and trade responses", () => {
     const start = initial();
     start.names = ["AmberFox#1234", "Blue"];

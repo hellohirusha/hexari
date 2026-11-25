@@ -8,6 +8,63 @@ import {
 } from "../src/hexari/engine/tradeCalculator";
 
 describe("trade calculator", () => {
+  it("values goal cards consumed by an offer even when the goal was initially complete", () => {
+    const base = {
+      board: defaultBoard,
+      hand: { ...emptyHand(), ore: 4, wheat: 2 },
+      receive: { ...emptyHand(), brick: 1 },
+      settlements: [],
+      cities: [],
+      bankRates: getBankRates([], [], 4),
+    };
+    const baseline = evaluateTrade({
+      ...base,
+      goal: "balanced",
+      give: { ...emptyHand(), ore: 1 },
+    });
+    const surplus = evaluateTrade({
+      ...base,
+      goal: "city",
+      give: { ...emptyHand(), ore: 1 },
+    });
+    const crossesReserve = evaluateTrade({
+      ...base,
+      goal: "city",
+      give: { ...emptyHand(), ore: 2 },
+    });
+    expect(surplus.deficitAfter).toBe(0);
+    expect(crossesReserve.deficitAfter).toBe(1);
+    expect(surplus.givenValue).toBeCloseTo(baseline.values.ore * 0.85);
+    expect(crossesReserve.givenValue).toBeCloseTo(
+      baseline.values.ore * (0.85 + 1.4),
+    );
+  });
+
+  it("keeps comparable ranges correct when offered cards cross a goal reserve", () => {
+    const base = {
+      board: defaultBoard,
+      hand: { ...emptyHand(), ore: 5, wood: 10, wheat: 2 },
+      receive: { ...emptyHand(), brick: 3 },
+      settlements: [],
+      cities: [],
+      goal: "city" as const,
+      bankRates: getBankRates([], [], 4),
+    };
+    const offer = { ...emptyHand(), ore: 2, wood: 1 };
+    const result = evaluateTrade({ ...base, give: offer });
+    for (const range of result.fairRanges) {
+      for (let count = 0; count <= 12; count++) {
+        const sample = evaluateTrade({
+          ...base,
+          give: { ...offer, [range.resource]: count },
+        });
+        const close =
+          sample.givenValue >= result.receivedValue * 0.8 - 1e-9 &&
+          sample.givenValue <= result.receivedValue * 1.2 + 1e-9;
+        expect(count >= range.min && count <= range.max).toBe(close);
+      }
+    }
+  });
   it("finds whole-card comparable ranges for mixed offers with other cards fixed", () => {
     const hand = { wood: 20, brick: 20, wheat: 0, ore: 0, sheep: 0 };
     const base = {

@@ -139,6 +139,85 @@ describe("settlement optimizer", () => {
     );
   });
 
+  it("ranks a specialized port higher when the corner produces its resource", () => {
+    const corner = vertices.find(
+      (v) =>
+        v.tiles.length < 3 &&
+        v.tiles.some((i) => defaultBoard[i].resource === "wood") &&
+        v.tiles.every((i) => defaultBoard[i].resource !== "ore"),
+    )!;
+    const wood = rankSettlements(defaultBoard, "port", [
+      { vertex: corner.id, resource: "wood", rate: 2 },
+    ]).find((entry) => entry.id === corner.id)!;
+    const ore = rankSettlements(defaultBoard, "port", [
+      { vertex: corner.id, resource: "ore", rate: 2 },
+    ]).find((entry) => entry.id === corner.id)!;
+    expect(wood.portBonus).toBeGreaterThan(ore.portBonus);
+    expect(wood.score).toBeGreaterThan(ore.score);
+  });
+
+  it("takes the first settlement's production into account for a second-placement port", () => {
+    const corner = vertices.find(
+      (v) =>
+        v.tiles.length < 3 &&
+        v.tiles.every((i) => defaultBoard[i].resource !== "ore"),
+    )!;
+    const first = vertices.find(
+      (v) =>
+        v.id !== corner.id &&
+        !corner.neighbors.includes(v.id) &&
+        v.tiles.some((i) => defaultBoard[i].resource === "ore"),
+    )!;
+    const port = [
+      { vertex: corner.id, resource: "ore" as const, rate: 2 as const },
+    ];
+    const withoutFirst = scoreVertex(
+      defaultBoard,
+      corner,
+      "port",
+      undefined,
+      port,
+    );
+    const withFirst = scoreVertex(defaultBoard, corner, "port", first, port);
+    expect(withFirst.portBonus).toBeGreaterThan(withoutFirst.portBonus);
+  });
+
+  it("increases specialized port value with production, while retaining future option value", () => {
+    const corner = vertices.find((v) => v.tiles.length === 1)!;
+    const port = [
+      { vertex: corner.id, resource: "wood" as const, rate: 2 as const },
+    ];
+    const board = defaultBoard.map((tile) => ({ ...tile }));
+    const tile = corner.tiles[0];
+    board[tile] = { resource: "wood", number: null };
+    const withoutProduction = scoreVertex(
+      board,
+      corner,
+      "balanced",
+      undefined,
+      port,
+    ).portBonus;
+    board[tile] = { resource: "wood", number: 2 };
+    const lowProduction = scoreVertex(
+      board,
+      corner,
+      "balanced",
+      undefined,
+      port,
+    ).portBonus;
+    board[tile] = { resource: "wood", number: 6 };
+    const highProduction = scoreVertex(
+      board,
+      corner,
+      "balanced",
+      undefined,
+      port,
+    ).portBonus;
+    expect(withoutProduction).toBeGreaterThan(0);
+    expect(lowProduction).toBeGreaterThan(withoutProduction);
+    expect(highProduction).toBeGreaterThan(lowProduction);
+  });
+
   it("does not count the same new resource twice in the second-placement bonus", () => {
     const first = vertices[0];
     const target = vertices.find(

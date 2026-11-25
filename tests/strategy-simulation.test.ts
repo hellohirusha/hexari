@@ -6,10 +6,49 @@ import {
   simulateStrategyRace,
   startingResources,
   distributeProduction,
+  sampleStrategyBoard,
 } from "../src/hexari/engine/strategySimulation";
 import { emptyHand } from "../src/shared/resources";
 
 describe("strategy race model", () => {
+  it("samples separated high-probability tokens and preserves tile inventory", () => {
+    let seed = 42;
+    const random = () =>
+      ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    for (let i = 0; i < 20; i++) {
+      const board = sampleStrategyBoard(defaultBoard, random)!;
+      expect(board.map((tile) => JSON.stringify(tile)).sort()).toEqual(
+        defaultBoard.map((tile) => JSON.stringify(tile)).sort(),
+      );
+      for (const vertex of vertices) {
+        expect(
+          vertex.tiles.filter((index) =>
+            [6, 8].includes(board[index].number ?? 0),
+          ).length,
+        ).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+  it("bounds sampling and reports impossible layouts as skipped", () => {
+    const impossible = defaultBoard.map((tile) => ({ ...tile, number: 6 }));
+    let calls = 0;
+    expect(
+      sampleStrategyBoard(
+        impossible,
+        () => {
+          calls++;
+          return 0.5;
+        },
+        3,
+      ),
+    ).toBeNull();
+    expect(calls).toBe(3 * (impossible.length - 1));
+    const result = simulateStrategyDistribution(impossible, [], { boards: 2 });
+    expect(result.games).toBe(0);
+    expect(result.skippedBoards).toBe(2);
+    expect(result.unfinished).toBe(0);
+    expect(Object.values(result.wins)).toEqual([0, 0, 0, 0]);
+  });
   it("handles shared bank shortages and a single claimant with a partial supply", () => {
     const board = defaultBoard.map(() => ({
       resource: "desert" as const,

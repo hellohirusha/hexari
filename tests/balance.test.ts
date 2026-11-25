@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { balanceBoard, regionalOpenings } from "../src/hexari/engine/analysis";
-import { defaultBoard, vertices } from "../src/shared/board";
+import {
+  balanceBoard,
+  balanceSeatDraft,
+  regionalOpenings,
+} from "../src/hexari/engine/analysis";
+import { defaultBoard, ports, vertices } from "../src/shared/board";
 
 describe("regional opening analysis", () => {
   it("returns four legal pairs in their stated regions", () => {
@@ -32,5 +36,36 @@ describe("regional opening analysis", () => {
       defaultBoard.map((t) => JSON.stringify(t)).sort(),
     );
     expect(gap(balanced)).toBeLessThanOrEqual(gap(defaultBoard));
+  });
+});
+
+describe("balanced board generation", () => {
+  it("does not report success for an invalid starting layout when no search is allowed", () => {
+    const board = defaultBoard.map((tile) => ({ ...tile }));
+    board[3].number = 8;
+    board[4].number = 6;
+    const result = balanceSeatDraft(board, ports, {
+      iterations: 0,
+      threshold: Number.POSITIVE_INFINITY,
+    });
+    expect(result.reached).toBe(false);
+    expect(result.board).toEqual(board);
+  });
+
+  it("does not generate adjacent six and eight tokens", () => {
+    let seed = 42;
+    const random = () =>
+      ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const result = balanceSeatDraft(defaultBoard, ports, {
+      generateNew: true,
+      random,
+    });
+    expect(result.reached).toBe(true);
+    for (const vertex of vertices) {
+      const red = vertex.tiles.filter((index) =>
+        [6, 8].includes(result.board[index].number ?? 0),
+      );
+      expect(red.length).toBeLessThanOrEqual(1);
+    }
   });
 });

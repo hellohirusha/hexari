@@ -298,7 +298,7 @@ describe("Forge audio", () => {
     result.stop();
   });
 
-  it("does not start result music after the result dialog closes or sound is stopped", async () => {
+  it("does not start result music after the result audio is stopped", async () => {
     vi.useFakeTimers();
     const { startResultAudio, stopSoundEffects } =
       await import("../src/forge/sound");

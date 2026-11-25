@@ -30,28 +30,11 @@ import { simulateStrategyDistribution } from "./engine/strategySimulation";
 import { emptyHand, goods, type Hand } from "../shared/resources";
 import { requestCoach } from "../shared/coachClient";
 import CoachAdvice from "../shared/CoachAdvice";
-type CoachEntry = { board: string; question: string; advice: string };
-function savedCoachHistory(): CoachEntry[] {
-  try {
-    const value: unknown = JSON.parse(
-      localStorage.getItem("hexari-coach-v1") ?? "[]",
-    );
-    return Array.isArray(value)
-      ? value
-          .filter((entry): entry is CoachEntry =>
-            Boolean(
-              entry &&
-              typeof entry.board === "string" &&
-              typeof entry.question === "string" &&
-              typeof entry.advice === "string",
-            ),
-          )
-          .slice(-12)
-      : [];
-  } catch {
-    return [];
-  }
-}
+import {
+  readCoachHistory,
+  writeCoachHistory,
+  type CoachEntry,
+} from "./coachHistory";
 const keys = ["wood", "brick", "wheat", "ore", "sheep"] as const;
 function initial() {
   try {
@@ -97,7 +80,7 @@ export default function Companion() {
     [hand, setHand] = useState<Hand>(emptyHand),
     [answer, setAnswer] = useState(""),
     [coachError, setCoachError] = useState(false),
-    [coachHistory, setCoachHistory] = useState<CoachEntry[]>(savedCoachHistory),
+    [coachHistory, setCoachHistory] = useState<CoachEntry[]>(readCoachHistory),
     [busy, setBusy] = useState(false);
   const [settlementText, setSettlementText] = useState("");
   const [cityText, setCityText] = useState("");
@@ -110,7 +93,7 @@ export default function Companion() {
     entry.board === coachBoardKey ||
     (defaultPortLayout && entry.board === legacyCoachBoardKey);
   useEffect(() => {
-    localStorage.setItem("hexari-coach-v1", JSON.stringify(coachHistory));
+    writeCoachHistory(coachHistory);
   }, [coachHistory]);
   useEffect(() => {
     function onBoardChanged(event: StorageEvent) {
@@ -391,15 +374,15 @@ export default function Companion() {
               <div className="section-kicker">BOARD STATS</div>
               <h2>Board stats</h2>
               <p>
-                Board-wide production assumes every tile is equally accessible.
-                These figures are not win rates.
+                Expected matching tiles per roll across the board. Actual card
+                income depends on buildings, the robber, and the bank.
               </p>
               <div className="distribution">
                 {goods.map((g) => (
                   <div key={g}>
                     <span>{g}</span>
                     <strong>{rates[g].toFixed(2)}</strong>
-                    <small>cards per roll</small>
+                    <small>tiles per roll</small>
                   </div>
                 ))}
               </div>
@@ -478,10 +461,10 @@ export default function Companion() {
               </div>
               <div className="field-label">SIMULATED STRATEGY RACE</div>
               <p>
-                A simplified race to five points across 24 shuffled versions of
-                this board. Four strategies rotate seats; terrain and number
-                pairs stay together and ports stay fixed. The bars show model
-                outcomes, not real-world win rates.
+                A simplified race to five points across up to 24 shuffled
+                versions of this board. Four strategies rotate seats; terrain
+                and number pairs stay together and ports stay fixed. The bars
+                show model outcomes, not real-world win rates.
               </p>
               {distribution ? (
                 <div
@@ -497,14 +480,20 @@ export default function Companion() {
                     ] as const
                   ).map(([id, label]) => {
                     const wins = distribution.wins[id];
-                    const percentage = (100 * wins) / distribution.games;
+                    const percentage = distribution.games
+                      ? (100 * wins) / distribution.games
+                      : 0;
                     return (
                       <div className="stats-simulation-row" key={id}>
                         <span>{label}</span>
                         <div className="region-track">
                           <div style={{ width: `${percentage}%` }} />
                         </div>
-                        <strong>{percentage.toFixed(1)}%</strong>
+                        <strong>
+                          {distribution.games
+                            ? `${percentage.toFixed(1)}%`
+                            : "-"}
+                        </strong>
                         <small>
                           {wins} of {distribution.games}
                         </small>
@@ -516,13 +505,20 @@ export default function Companion() {
                     unfinished after {distribution.maxTurns} rolls. Seed{" "}
                     {distribution.seed}.
                   </small>
+                  {distribution.skippedBoards > 0 && (
+                    <small>
+                      {distribution.skippedBoards} board samples skipped because
+                      a valid layout was not found.
+                    </small>
+                  )}
                   <p className="hint">
                     The model uses draft scores, second-settlement starting
                     resources, dice, bank trades, cities and simplified
                     expansion. It omits the robber, player trades, development
                     cards and road connectivity. It models a finite bank and
                     production shortages. Each strategy follows fixed
-                    priorities. These 96 races are a small sample.
+                    priorities. These {distribution.games} races are a small
+                    sample.
                   </p>
                 </div>
               ) : (

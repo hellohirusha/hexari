@@ -71,9 +71,7 @@ export async function streamCoach(
     }
     if (
       provider === "gemini" &&
-      (response.status === 429 ||
-        response.status >= 500 ||
-        (response.ok && !response.body)) &&
+      (!response.ok || !response.body) &&
       env.GROQ_API_KEY
     ) {
       await response.body?.cancel();

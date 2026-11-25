@@ -124,6 +124,29 @@ export function distributeProduction(
   }
 }
 
+/** Sample a board with separated high-probability tokens, when possible. */
+export function sampleStrategyBoard(
+  board: Tile[],
+  random: () => number,
+  attempts = 64,
+): Tile[] | null {
+  const separated = (candidate: Tile[]) =>
+    vertices.every(
+      (vertex) =>
+        vertex.tiles.filter((index) => {
+          const number = candidate[index]?.number;
+          return number === 6 || number === 8;
+        }).length <= 1,
+    );
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const candidate = shuffledBoard(board, random);
+    if (separated(candidate)) return candidate;
+  }
+  // A bounded search can miss a valid arrangement. Reuse the supplied board
+  // only if it satisfies the same constraint; otherwise do not invent a game.
+  return separated(board) ? board.map((tile) => ({ ...tile })) : null;
+}
+
 /** One simplified race: drafts, dice, bank trades, cities and abstract expansion.
  * No robber, player trades, development cards or road connectivity. */
 export function simulateStrategyRace(
@@ -234,8 +257,13 @@ export function simulateStrategyDistribution(
     balanced: 0,
   };
   let unfinished = 0;
+  let skippedBoards = 0;
   for (let index = 0; index < boards; index++) {
-    const sample = shuffledBoard(board, random);
+    const sample = sampleStrategyBoard(board, random);
+    if (!sample) {
+      skippedBoards++;
+      continue;
+    }
     // Reuse each board's dice sequence across seat rotations to reduce noise
     // from one strategy encountering luckier rolls than another.
     const diceSeed = Math.floor(random() * 0x100000000);
@@ -251,5 +279,13 @@ export function simulateStrategyDistribution(
       else unfinished++;
     }
   }
-  return { wins, unfinished, games: boards * 4, boards, seed, maxTurns };
+  return {
+    wins,
+    unfinished,
+    games: (boards - skippedBoards) * 4,
+    boards,
+    skippedBoards,
+    seed,
+    maxTurns,
+  };
 }

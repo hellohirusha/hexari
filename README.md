@@ -6,11 +6,17 @@
 
 Hexari brings board analysis, game tracking, trade evaluation, statistics, and AI coaching together around a shared board. Forge is a separate two-player game with its own board and rules. Both applications share rendering, design, and coaching infrastructure.
 
+![The fantasy coast artwork used in Forge](src/shared/assets/forge-fantasy-coast.png)
+
 ## Contents
 
 - [Explore the applications](#explore-the-applications)
+- [Product motivation](#product-motivation)
+- [Try each module](#try-each-module)
 - [How the applications work](#how-the-applications-work)
 - [Architecture](#architecture)
+- [Technical decisions](#technical-decisions)
+- [What to ship next](#what-to-ship-next)
 - [Technology](#technology)
 - [Project structure](#project-structure)
 - [Quick start](#quick-start)
@@ -32,6 +38,26 @@ Hexari brings board analysis, game tracking, trade evaluation, statistics, and A
 
 The combined local app serves the same surfaces at `/`, `/tools`, and `/forge`. The standalone Forge entry serves the game at `/`.
 
+## Product motivation
+
+A promising intersection can have strong production yet leave a player short of a needed resource or too far from a useful port. Comparing those trade-offs by eye becomes harder once dice rolls, builds, and trades change the position. Hexari puts the board and those decisions in one workspace, with uncertainty visible when information is missing.
+
+Forge explores a shorter game with a fixed opening, a five-point target, and a hand cap. Those choices are a design hypothesis about pace, not a claim that a specific game duration has been established by player testing.
+
+## Try each module
+
+| Module               | Interactive walkthrough                                                                                                              |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Board analyzer       | [Edit a board](https://hexari.hirusha.space/), then change a terrain tile or number and inspect its production map.                  |
+| Settlement optimizer | [Open the analyzer](https://hexari.hirusha.space/), select a corner, and compare it with the ranked alternatives.                    |
+| Live tracker         | [Open the workspace](https://hexari.hirusha.space/tools), enter player positions and record dice rolls or actions.                   |
+| Trade calculator     | [Open the workspace](https://hexari.hirusha.space/tools), set a hand and goal, and compare an offer with the bank rate.              |
+| AI coach             | [Open the workspace](https://hexari.hirusha.space/tools), enter a visible position and request advice when a provider is configured. |
+| Board stats          | [Open the workspace](https://hexari.hirusha.space/tools) to inspect production, opening opportunities, and modelled strategy races.  |
+| Forge                | [Play Forge](https://forge.hirusha.space/) against the bot or another player.                                                        |
+
+The links open the interactive applications. Recorded demonstrations and module GIFs are not included here.
+
 ## How the applications work
 
 ### Hexari
@@ -47,7 +73,7 @@ Scores, balance searches, trade ranges, and strategy races are heuristics or sim
 
 ### Forge
 
-Forge is a two-player game on a fixed 37-tile board. Each player chooses a starting settlement and begins with one of each resource. Roll, collect, trade, and build to reach **five victory points**.
+Forge is a two-player game on a fixed 37-tile board. Each player starts with a predetermined settlement and one of each resource. Roll, collect, trade, and build to reach **five victory points**.
 
 - Play against a bot, share one device, or find an online opponent.
 - Build roads and settlements, or upgrade a settlement to a city. A successful build ends the turn.
@@ -120,6 +146,19 @@ sequenceDiagram
 ```
 
 A disconnected player has a 60-second reconnection grace period. Account-linked unfinished rooms can be recovered while the room remains within its two-hour lifetime. Guest reconnection uses credentials stored in the browser tab. The in-memory queue and active-room coordination use one service instance.
+
+## Technical decisions
+
+- **PixiJS terrain with SVG controls:** PixiJS renders the board artwork while SVG controls expose selectable tiles and corners to the browser. This keeps the visual layer separate from interaction semantics.
+- **Explicit game phases:** Forge keeps rules and transitions in its TypeScript engine, separate from React rendering. The current phases cover setup, rolling, building, and the game end; server commands use the same rules.
+- **Client-side analysis with dedicated services where needed:** Board calculations run in the browser. The coach uses a server function to keep provider credentials private, and online play uses a separate authoritative WebSocket service for matchmaking, game commands, and reconnection.
+- **Heuristics with stated limits:** Opening scores, suggested trade ranges, and strategy simulations surface their assumptions instead of presenting their outputs as observed win rates.
+
+## What to ship next
+
+1. **Validate decisions with recorded games.** Compare opening scores and trade advice with real play to identify systematic errors and improve confidence in recommendations.
+2. **Verify and harden online play.** Exercise matchmaking, recovery, chat, and accounts across devices with the configured services; add shared coordination before scaling beyond one service instance.
+3. **Add recorded demonstrations.** Capture a representative walkthrough of each module and a Forge game so readers can understand the interaction before opening the app.
 
 ## Technology
 
