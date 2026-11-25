@@ -16,7 +16,6 @@ Hexari brings board analysis, game tracking, trade evaluation, statistics, and A
 - [How the applications work](#how-the-applications-work)
 - [Architecture](#architecture)
 - [Technical decisions](#technical-decisions)
-- [What to ship next](#what-to-ship-next)
 - [Technology](#technology)
 - [Project structure](#project-structure)
 - [Quick start](#quick-start)
@@ -153,12 +152,6 @@ A disconnected player has a 60-second reconnection grace period. Account-linked 
 - **Explicit game phases:** Forge keeps rules and transitions in its TypeScript engine, separate from React rendering. The current phases cover setup, rolling, building, and the game end; server commands use the same rules.
 - **Client-side analysis with dedicated services where needed:** Board calculations run in the browser. The coach uses a server function to keep provider credentials private, and online play uses a separate authoritative WebSocket service for matchmaking, game commands, and reconnection.
 - **Heuristics with stated limits:** Opening scores, suggested trade ranges, and strategy simulations surface their assumptions instead of presenting their outputs as observed win rates.
-
-## What to ship next
-
-1. **Validate decisions with recorded games.** Compare opening scores and trade advice with real play to identify systematic errors and improve confidence in recommendations.
-2. **Verify and harden online play.** Exercise matchmaking, recovery, chat, and accounts across devices with the configured services; add shared coordination before scaling beyond one service instance.
-3. **Add recorded demonstrations.** Capture a representative walkthrough of each module and a Forge game so readers can understand the interaction before opening the app.
 
 ## Technology
 
