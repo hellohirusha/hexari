@@ -65,6 +65,8 @@ describe("Forge longest road", () => {
     const game = newGame(0);
     game.phase = "build";
     game.dice = 7;
+    game.players[0].hand.wood = 1;
+    game.players[0].hand.brick = 1;
     game.players[0].cities = [80];
     game.players[0].roads = [
       [23, 22],
@@ -91,6 +93,7 @@ describe("Forge longest road", () => {
     game.phase = "build";
     game.dice = 7;
     game.longestRoad = 0;
+    game.players[1].hand = { wood: 1, brick: 1, wheat: 1, ore: 0, sheep: 1 };
     game.players[0].roads = [
       [23, 22],
       [22, 11],
@@ -131,6 +134,8 @@ describe("Forge longest road", () => {
     game.players[0].settlements = [38];
     game.players[1].settlements = [23];
     game.players[1].cities = [80];
+    game.players[1].hand.wood = 1;
+    game.players[1].hand.brick = 1;
     game.players[1].roads = [
       [23, 22],
       [22, 11],
@@ -146,6 +151,8 @@ describe("Forge longest road", () => {
     const game = newGame(0);
     game.phase = "build";
     game.dice = 7;
+    game.players[0].hand.wood = 1;
+    game.players[0].hand.brick = 1;
     game.players[0].cities = [80];
     game.players[0].roads = [
       [23, 22],
