@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { pips } from "../src/shared/board";
 import { defaultBoard, vertices } from "../src/forge/board";
 import {
   goods,
@@ -15,25 +14,18 @@ import {
 } from "../src/hexari/engine/analysis";
 import { botAcceptsTrade } from "../src/forge/ForgeMarket";
 
+function fundedGame(now?: number) {
+  const game = newGame(now);
+  for (const player of game.players)
+    for (const resource of goods) player.hand[resource] = 1;
+  return game;
+}
+
 describe("forge transitions", () => {
-  it("starts both players with three resources and equal expected production", () => {
-    const game = newGame();
-    const starts = game.players.map(
-      (player) => vertices[player.settlements[0]],
-    );
-    expect(starts[0].neighbors).not.toContain(starts[1].id);
-    const values = starts.map((start) => ({
-      resources: new Set(start.tiles.map((tile) => defaultBoard[tile].resource))
-        .size,
-      pips: start.tiles.reduce(
-        (sum, tile) => sum + (pips[defaultBoard[tile].number ?? 0] ?? 0),
-        0,
-      ),
-    }));
-    expect(values).toEqual([
-      { resources: 3, pips: 12 },
-      { resources: 3, pips: 12 },
-    ]);
+  it("starts manual games with no predetermined settlements", () => {
+    const game = newGame(0, { manualSetup: true });
+    expect(game.phase).toBe("setup");
+    expect(game.players.map((player) => player.settlements)).toEqual([[], []]);
   });
   it("starts with two players and one point each", () => {
     const g = newGame(1);
@@ -64,7 +56,7 @@ describe("forge transitions", () => {
     expect(g.turnStarted).toBe(123);
   });
   it("builds a connected road and charges its cost", () => {
-    let g = transition(newGame(), { type: "roll", total: 7 });
+    let g = transition(fundedGame(), { type: "roll", total: 6 });
     const start = g.players[0].settlements[0];
     const to = vertices[start].neighbors[0];
     const before = { ...g.players[0].hand };
@@ -84,7 +76,7 @@ describe("forge transitions", () => {
     expect(g.turnStarted).toBe(123);
   });
   it("does not permit building an unconnected road", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     expect(
       transition(g, {
         type: "build",
@@ -95,7 +87,7 @@ describe("forge transitions", () => {
     ).toBe(g);
   });
   it("passes the turn after a settlement or city, but not after an invalid build", () => {
-    const game = transition(newGame(0), { type: "roll", total: 7 });
+    const game = transition(fundedGame(0), { type: "roll", total: 6 });
     const start = game.players[0].settlements[0];
     const roadEnd = vertices[start].neighbors[0];
     const nextCorner = vertices[roadEnd].neighbors.find((id) => id !== start)!;
@@ -129,14 +121,16 @@ describe("forge transitions", () => {
       transition(game, { type: "build", building: "city", at: start, now: 44 }),
     ).toBe(game);
   });
-  it("caps production at seven cards", () => {
+  it("allows production to increase a hand beyond seven cards", () => {
     const g = newGame();
     for (const x of goods) g.players[0].hand[x] = 0;
     g.players[0].hand.wood = 7;
     const n =
       defaultBoard[vertices[g.players[0].settlements[0]].tiles[0]].number ?? 7;
     const result = transition(g, { type: "roll", total: n });
-    expect(goods.reduce((s, x) => s + result.players[0].hand[x], 0)).toBe(7);
+    expect(
+      goods.reduce((s, x) => s + result.players[0].hand[x], 0),
+    ).toBeGreaterThan(7);
   });
   it("does not allow a bank trade before rolling", () => {
     const g = newGame();
@@ -146,14 +140,14 @@ describe("forge transitions", () => {
     );
   });
   it("handles a 4:1 bank trade", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     g.players[0].hand.wood = 4;
     const next = transition(g, { type: "bank", give: "wood", receive: "ore" });
     expect(next.players[0].hand.wood).toBe(0);
     expect(next.players[0].hand.ore).toBe(2);
   });
   it("exchanges cards between players without mutating the original hands", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     const [first, second] = g.players.map((player) => ({ ...player.hand }));
     const next = transition(g, {
       type: "playerTrade",
@@ -182,7 +176,7 @@ describe("forge transitions", () => {
         receive: "ore",
       }),
     ).toBe(initial);
-    const game = transition(initial, { type: "roll", total: 7 });
+    const game = transition(initial, { type: "roll", total: 6 });
     game.players[1].hand.ore = 0;
     expect(
       transition(game, { type: "playerTrade", give: "wood", receive: "ore" }),
@@ -199,8 +193,8 @@ describe("forge transitions", () => {
     game.players[1].hand.ore = 0;
     expect(botAcceptsTrade(game, "wood", "ore")).toBe(false);
   });
-  it("can free capacity from a blocked seven-card hand", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+  it("can discard a selected resource during the build phase", () => {
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     g.players[0].hand = { wood: 2, brick: 0, wheat: 0, ore: 2, sheep: 3 };
     const next = transition(g, { type: "discard", resource: "sheep" });
     expect(next.players[0].hand.sheep).toBe(2);
@@ -209,12 +203,12 @@ describe("forge transitions", () => {
     ).toBe(6);
   });
   it("rejects discarding a resource that is absent", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     g.players[0].hand.wood = 0;
     expect(transition(g, { type: "discard", resource: "wood" })).toBe(g);
   });
   it("awards victory when a city reaches five points", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     g.players[0].settlements = [8, 20, 30, 40];
     g.players[0].hand.wheat = 2;
     g.players[0].hand.ore = 3;
@@ -233,17 +227,17 @@ describe("forge transitions", () => {
     const g = newGame();
     const next = transition(g, { type: "roll", total: 7 });
     expect(g.phase).toBe("roll");
-    expect(next.phase).toBe("build");
+    expect(next.phase).toBe("robber");
   });
   it("rejects a bank trade involving the same resource", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     g.players[0].hand.wood = 4;
     expect(transition(g, { type: "bank", give: "wood", receive: "wood" })).toBe(
       g,
     );
   });
   it("does not allow city upgrades on another player settlement", () => {
-    const g = transition(newGame(), { type: "roll", total: 7 });
+    const g = transition(fundedGame(), { type: "roll", total: 6 });
     g.players[0].hand.wheat = 2;
     g.players[0].hand.ore = 3;
     expect(
