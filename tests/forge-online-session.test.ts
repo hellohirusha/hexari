@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { newGame } from "../src/forge/engine";
+import { legalSetupRoad, newGame } from "../src/forge/engine";
+import { vertices } from "../src/forge/board";
 import {
   applyOnlineCommand,
   timeoutOnlineTurn,
@@ -14,7 +15,7 @@ const initial = (): OnlineSession => ({
 });
 
 describe("online turn protocol", () => {
-  it("continues a legacy saved game that is still placing settlements", () => {
+  it("requires each online player to place a road after their starting settlement", () => {
     const saved: OnlineSession = {
       game: newGame(0, { manualSetup: true }),
       revision: 0,
@@ -30,25 +31,60 @@ describe("online turn protocol", () => {
     );
     expect(first.ok).toBe(true);
     if (!first.ok) return;
-    const second = applyOnlineCommand(
+    const firstRoad = applyOnlineCommand(
       first.session,
+      0,
       1,
-      1,
-      { type: "build", building: "settlement", at: 38 },
+      {
+        type: "build",
+        building: "road",
+        at: 23,
+        to: vertices[23].neighbors[0],
+      },
       2,
+      roll,
+    );
+    expect(firstRoad.ok).toBe(true);
+    if (!firstRoad.ok) return;
+    const second = applyOnlineCommand(
+      firstRoad.session,
+      1,
+      2,
+      { type: "build", building: "settlement", at: 38 },
+      3,
       roll,
     );
     expect(second.ok).toBe(true);
     if (!second.ok) return;
-    expect(second.session.game.phase).toBe("roll");
+    expect(second.session.game.phase).toBe("setup");
+    const to = vertices[38].neighbors.find((neighbor) =>
+      legalSetupRoad(second.session.game, 38, neighbor),
+    )!;
+    const secondRoad = applyOnlineCommand(
+      second.session,
+      1,
+      3,
+      { type: "build", building: "road", at: 38, to },
+      4,
+      roll,
+    );
+    expect(secondRoad.ok).toBe(true);
+    if (!secondRoad.ok) return;
+    expect(secondRoad.session.game.phase).toBe("roll");
+    expect(secondRoad.session.game.turn).toBe(0);
     expect(
-      second.session.game.players.map((player) => player.settlements),
+      secondRoad.session.game.players.map((player) => player.settlements),
     ).toEqual([[23], [38]]);
+    expect(
+      secondRoad.session.game.players.map((player) => player.roads.length),
+    ).toEqual([1, 1]);
   });
   it("preserves both nicknames through game actions and trade responses", () => {
     const start = initial();
     start.names = ["AmberFox#1234", "Blue"];
     start.game.phase = "build";
+    start.game.players[0].hand.wood = 1;
+    start.game.players[1].hand.ore = 1;
     const offered = applyOnlineCommand(
       start,
       0,
@@ -128,6 +164,8 @@ describe("online turn protocol", () => {
   it("requires the other player to accept an offer before cards move", () => {
     const start = initial();
     start.game.phase = "build";
+    start.game.players[0].hand.wood = 1;
+    start.game.players[1].hand.ore = 1;
     const offer = applyOnlineCommand(
       start,
       0,
@@ -149,7 +187,7 @@ describe("online turn protocol", () => {
       2,
       roll,
     );
-    expect(accepted.ok && accepted.session.game.players[0].hand.ore).toBe(2);
+    expect(accepted.ok && accepted.session.game.players[0].hand.ore).toBe(1);
     expect(accepted.ok && accepted.session.offer).toBeNull();
   });
   it("rejects malformed resource and building requests without altering state", () => {
@@ -158,6 +196,17 @@ describe("online turn protocol", () => {
     const invalid = { type: "bank", give: "fake", receive: "ore" } as never;
     expect(applyOnlineCommand(start, 0, 0, invalid, 1, roll).ok).toBe(false);
     expect(start.revision).toBe(0);
-    expect(start.game.players[0].hand.wood).toBe(1);
+    expect(start.game.players[0].hand.wood).toBe(0);
+  });
+
+  it("keeps an automatic seven roll and waits for the robber action", () => {
+    const result = timeoutOnlineTurn(initial(), 120000, () => [3, 4]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.dice).toEqual([3, 4]);
+    expect(result.session.game.phase).toBe("robber");
+    expect(result.session.game.turn).toBe(0);
+    expect(result.session.game.turnStarted).toBe(120000);
+    expect(result.session.revision).toBe(1);
   });
 });
