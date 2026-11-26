@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BuildingArt, TerrainArt } from "../shared/TerrainArt";
+import "./ForgeGuide.css";
 
 const topics = [
   "The goal",
@@ -14,6 +15,13 @@ const topics = [
 export default function ForgeGuide() {
   const [open, setOpen] = useState(false);
   const [topic, setTopic] = useState(0);
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const element = dialog.current;
+    element?.showModal();
+    return () => element?.close();
+  }, [open]);
   return (
     <section className="forge-guide" aria-label="Forge guide">
       <button
@@ -30,11 +38,20 @@ export default function ForgeGuide() {
         </svg>
       </button>
       {open && (
-        <div id="forge-guide-content" className="panel forge-guide-panel">
+        <dialog
+          ref={dialog}
+          id="forge-guide-content"
+          className="panel forge-guide-panel"
+          aria-labelledby="forge-guide-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            setOpen(false);
+          }}
+        >
           <div className="forge-guide-header">
             <div>
               <span className="section-kicker">THE FORGE FIELD GUIDE</span>
-              <h2>Learn the game</h2>
+              <h2 id="forge-guide-title">Learn the game</h2>
             </div>
             <p>Your turn timer keeps running while the guide is open.</p>
             <button
@@ -96,8 +113,9 @@ export default function ForgeGuide() {
                 <>
                   <p>
                     Choose a bot, share a device, or play online. Each player
-                    begins with a settlement already on the board and one of
-                    each resource.
+                    begins with no resource cards, chooses a starting
+                    settlement, then places a road connected to it. The opening
+                    pieces are taken from each player's available supply.
                   </p>
                   <p>
                     Gold pieces belong to Player 1. Blue pieces belong to Player
@@ -125,9 +143,11 @@ export default function ForgeGuide() {
                     )}
                   </div>
                   <p>
-                    On a 7, each player receives one of their least-held
-                    resources, if their hand has room. Ties use an alternating
-                    resource order. There is no robber.
+                    On a 7, no tiles produce. Each player holding eight or more
+                    cards discards half, rounded down. The player who rolled
+                    moves the robber to another tile and steals one random card
+                    from the opponent if they have a building beside that tile
+                    and hold a card. The robber blocks production on its tile.
                   </p>
                 </>
               )}
@@ -173,9 +193,8 @@ export default function ForgeGuide() {
                     bot. The recipient can accept or decline.
                   </p>
                   <p>
-                    Your hand holds at most seven cards. Excess production is
-                    lost. During your build phase, you can discard a card to
-                    make room.
+                    You can discard a card during your build phase. A roll of 7
+                    requires players with eight or more cards to discard half.
                   </p>
                 </>
               )}
@@ -199,16 +218,17 @@ export default function ForgeGuide() {
                     <summary>Why did a roll give me no resources?</summary>
                     <p>
                       Only matching tiles next to your settlements or cities
-                      produce. A 7 grants a least-held resource instead. A full
-                      hand cannot receive more cards.
+                      produce, and the robber blocks its tile. A roll of 7
+                      produces no resources.
                     </p>
                   </details>
                   <details>
                     <summary>Why can’t I place a settlement?</summary>
                     <p>
-                      Your first settlement is free. Later settlements need a
-                      connected road and resources. All settlements must occupy
-                      an empty corner with no adjacent settlement or city.
+                      Your starting settlement is placed during setup. Later
+                      settlements need a connected road and resources. All
+                      settlements must occupy an empty corner with no adjacent
+                      settlement or city.
                     </p>
                   </details>
                   <details>
@@ -228,30 +248,30 @@ export default function ForgeGuide() {
                   </details>
                 </div>
               )}
-              <div className="forge-guide-actions">
-                <button
-                  className="button ghost"
-                  type="button"
-                  disabled={topic === 0}
-                  onClick={() => setTopic((value) => value - 1)}
-                >
-                  Previous
-                </button>
-                <button
-                  className="button primary"
-                  type="button"
-                  onClick={() =>
-                    topic === topics.length - 1
-                      ? setOpen(false)
-                      : setTopic((value) => value + 1)
-                  }
-                >
-                  {topic === topics.length - 1 ? "Back to game" : "Next"}
-                </button>
-              </div>
             </div>
           </div>
-        </div>
+          <div className="forge-guide-actions">
+            <button
+              className="button ghost"
+              type="button"
+              disabled={topic === 0}
+              onClick={() => setTopic((value) => value - 1)}
+            >
+              Previous
+            </button>
+            <button
+              className="button primary"
+              type="button"
+              onClick={() =>
+                topic === topics.length - 1
+                  ? setOpen(false)
+                  : setTopic((value) => value + 1)
+              }
+            >
+              {topic === topics.length - 1 ? "Back to game" : "Next"}
+            </button>
+          </div>
+        </dialog>
       )}
     </section>
   );
