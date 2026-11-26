@@ -10,7 +10,12 @@ import ForgeOnlineLobby, {
 import { newGame, transition } from "../src/forge/engine";
 import { deliverChat } from "../src/forge/chatSend";
 
-const roll = () => transition(newGame(0), { type: "roll", total: 7 });
+const roll = () => {
+  const game = transition(newGame(0), { type: "roll", total: 6 });
+  game.players[0].hand.wood = 1;
+  game.players[1].hand.ore = 1;
+  return game;
+};
 const offer = {
   by: 0 as const,
   give: "wood" as const,

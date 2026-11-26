@@ -1,16 +1,28 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import BrandMark from "../shared/BrandMark";
 import { forgeHref } from "../shared/navigation";
+import { returningToAnalyzer } from "./forgeInvitationNavigation";
 
 export default function ForgeInvitation() {
   const dialog = useRef<HTMLDialogElement>(null);
+  const [returning] = useState(() =>
+    returningToAnalyzer(window.location.href, document.referrer),
+  );
 
   useEffect(() => {
+    const url = new URL(window.location.href);
+    if (["tools", "forge"].includes(url.searchParams.get("from") ?? "")) {
+      url.searchParams.delete("from");
+      window.history.replaceState(window.history.state, "", url);
+    }
+    if (returning) return;
     const element = dialog.current;
     if (!element) return;
     element.showModal();
     return () => element.close();
-  }, []);
+  }, [returning]);
+
+  if (returning) return null;
 
   return (
     <dialog

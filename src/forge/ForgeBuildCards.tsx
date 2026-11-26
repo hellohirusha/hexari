@@ -1,15 +1,23 @@
 import { BuildingArt } from "../shared/TerrainArt";
 import { buildKinds, buildOptions } from "./buildOptions";
-import { costs, type Building, type Game } from "./engine";
+import {
+  costs,
+  remainingPieces,
+  setupNeedsRoad,
+  type Building,
+  type Game,
+} from "./engine";
 
 export default function ForgeBuildCards({
   game,
   botTurn,
+  playerSeat = game.turn,
   selected,
   onSelect,
 }: {
   game: Game;
   botTurn: boolean;
+  playerSeat?: 0 | 1;
   selected: Building | null;
   onSelect: (building: Building) => void;
 }) {
@@ -17,16 +25,23 @@ export default function ForgeBuildCards({
     <div className="forge-build-cards" role="group" aria-label="Buildings">
       {buildKinds.map((building) => {
         const option = buildOptions(game, building);
+        const remaining = remainingPieces(game.players[playerSeat], building);
         const enabled = option.available && !botTurn;
-        const cost = Object.entries(costs[building])
-          .map(([resource, amount]) => `${amount} ${resource}`)
-          .join(", ");
+        const cost =
+          game.phase === "setup" &&
+          (building === "road" || building === "settlement")
+            ? "Starting placement"
+            : Object.entries(costs[building])
+                .map(([resource, amount]) => `${amount} ${resource}`)
+                .join(", ");
         const name = building[0].toUpperCase() + building.slice(1);
         const reason = botTurn
           ? "Opponent's turn"
-          : game.phase === "setup"
-            ? "Place your starting settlement first"
-            : game.phase !== "build"
+          : game.phase === "setup" && !enabled
+            ? setupNeedsRoad(game)
+              ? "Place your starting road first"
+              : "Place your starting settlement first"
+            : game.phase !== "build" && game.phase !== "setup"
               ? "Roll first"
               : !option.affordable
                 ? "Not enough resources"
@@ -40,10 +55,13 @@ export default function ForgeBuildCards({
             className="forge-build-card"
             disabled={!enabled}
             aria-pressed={selected === building}
-            aria-label={`${name}. ${cost}. ${reason}.`}
-            title={`${name}: ${cost}. ${reason}.`}
+            aria-label={`${name}. ${cost}. ${reason}. ${remaining} remaining.`}
+            title={`${name}: ${remaining} remaining. ${cost}. ${reason}.`}
             onClick={() => onSelect(building)}
           >
+            <span className="forge-build-remaining" aria-hidden="true">
+              {remaining}
+            </span>
             <svg viewBox="-16 -16 32 32" aria-hidden="true">
               {building === "road" ? (
                 <g transform="rotate(-35)">

@@ -10,14 +10,11 @@ import { env, execPath } from "node:process";
 import { URL } from "node:url";
 import WebSocket from "ws";
 import {
-  canAfford,
-  costs,
   goods,
-  legalRoad,
-  legalSettlement,
-  totalPoints,
+  legalSetupRoad,
+  bestSetupSettlement,
 } from "../src/forge/engine.ts";
-import { vertices } from "../src/forge/board.ts";
+import { defaultBoard, vertices } from "../src/forge/board.ts";
 
 function inbox(socket) {
   const messages = [];
@@ -120,15 +117,14 @@ globalThis.setTimeout = (callback, ms, ...args) => original(callback, ms === 300
 );
 
 test(
-  "two matched players start with fixed settlements and play an online game to victory",
+  "two matched players place their opening pieces and resolve a seven",
   { timeout: 120000 },
   async (t) => {
-    // The production server owns dice rolls. This test-only preloader fixes the
-    // dice at 3 + 4, exercising the supply rule without changing server code.
+    // Eight rolls of 8 give both players cards, then a 7 tests both discards.
     const preloader = `import crypto from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
 let index = 0;
-crypto.randomInt = () => (index++ % 2 ? 4 : 3);
+crypto.randomInt = () => { const n = index++; return n < 16 ? 4 : (n % 2 ? 4 : 3); };
 syncBuiltinESMExports();`;
     const server = spawn(
       execPath,
@@ -172,14 +168,18 @@ syncBuiltinESMExports();`;
     clients[1].socket.send(JSON.stringify({ type: "findMatch" }));
     let states = await Promise.all(clients.map(({ next }) => next("state")));
     for (const state of states) {
-      assert.equal(state.session.game.phase, "roll");
+      assert.equal(state.session.game.phase, "setup");
       assert.equal(state.session.game.turn, 0);
-      assert.deepEqual(
-        state.session.game.players.map((player) => player.settlements),
-        [[23], [38]],
+      assert.ok(
+        state.session.game.players.every(
+          (player) => player.settlements.length === 0,
+        ),
       );
     }
-    let commands = 0;
+    assert.deepEqual(
+      states[0].session.game.players.map((player) => player.settlements),
+      states[1].session.game.players.map((player) => player.settlements),
+    );
     const play = async (seat, command) => {
       // Stay under the same rate limit imposed on real clients.
       await delay(125);
@@ -192,69 +192,92 @@ syncBuiltinESMExports();`;
       );
       states = await Promise.all(clients.map(({ next }) => next("state")));
       assert.equal(states[0].session.revision, states[1].session.revision);
-      commands++;
     };
-    let turns = 0;
-    while (states[0].session.game.phase !== "end" && turns < 200) {
-      let game = states[0].session.game;
-      const seat = game.turn;
-      await play(seat, { type: "roll" });
-      game = states[seat].session.game;
-      assert.equal(game.dice, 7);
-      const player = game.players[seat];
-      const city = player.settlements[0];
-      const settlement = vertices.find((vertex) =>
-        legalSettlement(game, vertex.id),
-      );
-      const edge = vertices.flatMap((vertex) =>
-        vertex.neighbors
-          .filter((id) => id > vertex.id && legalRoad(game, vertex.id, id))
-          .map((id) => [vertex.id, id]),
-      )[0];
-      if (city !== undefined && canAfford(player.hand, costs.city)) {
-        await play(seat, { type: "build", building: "city", at: city });
-      } else if (settlement && canAfford(player.hand, costs.settlement)) {
-        await play(seat, {
+    const producingTile = defaultBoard.findIndex((tile) => tile.number === 8);
+    const candidates = vertices.filter((vertex) =>
+      vertex.tiles.includes(producingTile),
+    );
+    const openingCorners = [
+      candidates[0].id,
+      candidates.find(
+        (vertex) =>
+          vertex.id !== candidates[0].id &&
+          !candidates[0].neighbors.includes(vertex.id),
+      ).id,
+    ];
+    for (const seat of [0, 1]) {
+      const at = openingCorners[seat];
+      assert.notEqual(at, undefined);
+      await play(seat, { type: "build", building: "settlement", at });
+      for (const state of states)
+        assert.deepEqual(state.publicAction, {
           type: "build",
+          actor: seat,
           building: "settlement",
-          at: settlement.id,
+          setup: true,
         });
-      } else if (edge && canAfford(player.hand, costs.road)) {
-        await play(seat, {
+      assert.equal(states[seat].session.game.turn, seat);
+      const before = states[seat].session.game.players[seat].hand;
+      const to = vertices[at].neighbors.find((neighbor) =>
+        legalSetupRoad(states[seat].session.game, at, neighbor),
+      );
+      assert.notEqual(to, undefined);
+      await play(seat, { type: "build", building: "road", at, to });
+      for (const state of states)
+        assert.deepEqual(state.publicAction, {
           type: "build",
+          actor: seat,
           building: "road",
-          at: edge[0],
-          to: edge[1],
+          setup: true,
         });
-      } else {
-        if (
-          goods.reduce(
-            (total, resource) => total + player.hand[resource],
-            0,
-          ) === 7
-        ) {
-          const discard =
-            goods.find((resource) => player.hand[resource] > 1) ??
-            goods.find((resource) => player.hand[resource] > 0);
-          await play(seat, { type: "discard", resource: discard });
-        }
-        await play(seat, { type: "endTurn" });
-      }
-      turns++;
+      assert.deepEqual(states[seat].session.game.players[seat].hand, before);
+      assert.equal(states[seat].session.game.players[seat].roads.length, 1);
     }
-    const finalGames = states.map(({ session }) => session.game);
-    assert.ok(
-      turns < 200,
-      `Game did not finish after ${turns} turns and ${commands} commands`,
+    assert.equal(states[0].session.game.phase, "roll");
+    for (let turn = 0; turn < 8; turn++) {
+      const seat = states[0].session.game.turn;
+      await play(seat, { type: "roll" });
+      assert.equal(states[seat].session.game.dice, 8);
+      await play(seat, { type: "endTurn" });
+    }
+    await play(0, { type: "roll" });
+    assert.equal(states[0].session.game.dice, 7);
+    assert.equal(states[0].session.game.phase, "discard");
+    assert.deepEqual(states[0].session.game.discardRemaining, [4, 4]);
+    for (const seat of [0, 1]) {
+      while (states[seat].session.game.discardRemaining[seat] > 0) {
+        const hand = states[seat].session.game.players[seat].hand;
+        const resource = goods.find((item) => hand[item] > 0);
+        assert.ok(resource);
+        await play(seat, { type: "sevenDiscard", resource });
+        assert.equal(
+          states[1 - seat].session.game.players[seat].hand[resource],
+          0,
+        );
+      }
+    }
+    assert.equal(states[0].session.game.phase, "robber");
+    await play(0, { type: "moveRobber", tile: producingTile });
+    assert.equal(states[0].session.game.phase, "build");
+    assert.equal(states[1].session.game.robberTile, producingTile);
+    assert.equal(
+      goods.reduce(
+        (sum, resource) =>
+          sum + states[0].session.game.players[0].hand[resource],
+        0,
+      ),
+      5,
     );
-    assert.equal(finalGames[0].phase, "end");
-    assert.equal(finalGames[1].phase, "end");
-    assert.equal(finalGames[0].winner, finalGames[1].winner);
-    assert.ok(finalGames[0].winner === 0 || finalGames[0].winner === 1);
-    assert.ok(totalPoints(finalGames[0], finalGames[0].winner) >= 5);
-    t.diagnostic(
-      `Controlled game: Player ${finalGames[0].winner + 1} won in ${turns} turns (${commands} commands).`,
+    assert.equal(
+      goods.reduce(
+        (sum, resource) =>
+          sum + states[1].session.game.players[1].hand[resource],
+        0,
+      ),
+      3,
     );
+    await play(0, { type: "endTurn" });
+    assert.equal(states[1].session.game.turn, 1);
   },
 );
 
@@ -262,9 +285,20 @@ test(
   "two players join, take turns, trade and observe disconnects",
   { timeout: 20000 },
   async (t) => {
+    const preloader = `import crypto from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
+const dice = [3, 5, 4, 5, 2, 3, 1, 1, 3, 3, 5, 5, 5, 6, 6, 6];
+let index = 0;
+crypto.randomInt = () => dice[index++ % dice.length];
+syncBuiltinESMExports();`;
     const server = spawn(
       execPath,
-      ["--experimental-strip-types", "server/multiplayer.mjs"],
+      [
+        "--import",
+        `data:text/javascript,${encodeURIComponent(preloader)}`,
+        "--experimental-strip-types",
+        "server/multiplayer.mjs",
+      ],
       {
         env: {
           ...env,
@@ -327,19 +361,80 @@ test(
     assert.equal(initialHost.seat, 0);
     assert.equal(initialGuest.seat, 1);
     assert.equal(initialGuest.session.game.players[0].hand.wood, 0);
-    assert.equal(initialGuest.session.game.players[1].hand.wood, 1);
+    assert.equal(initialGuest.session.game.players[1].hand.wood, 0);
     for (const resource of ["wood", "brick", "wheat", "ore", "sheep"]) {
       assert.equal(initialHost.session.game.players[1].hand[resource], 0);
       assert.equal(initialGuest.session.game.players[0].hand[resource], 0);
     }
     assert.equal((await fetch(`http://127.0.0.1:${port}/ready`)).status, 503);
-    assert.equal(initialHost.session.game.phase, "roll");
-    assert.deepEqual(initialHost.session.game.players[0].settlements, [23]);
-    assert.deepEqual(initialHost.session.game.players[1].settlements, [38]);
-    guest.send(
+    assert.equal(initialHost.session.game.phase, "setup");
+    assert.ok(
+      initialHost.session.game.players.every(
+        (player) => player.settlements.length === 0,
+      ),
+    );
+    assert.deepEqual(
+      initialHost.session.game.players.map((player) => player.settlements),
+      initialGuest.session.game.players.map((player) => player.settlements),
+    );
+    const firstCorner = bestSetupSettlement(initialHost.session.game);
+    host.send(
       JSON.stringify({
         type: "command",
         revision: 0,
+        command: { type: "build", building: "settlement", at: firstCorner },
+      }),
+    );
+    const firstHost = await hostNext("state");
+    await guestNext("state");
+    const firstRoad = vertices[firstCorner].neighbors.find((neighbor) =>
+      legalSetupRoad(firstHost.session.game, firstCorner, neighbor),
+    );
+    host.send(
+      JSON.stringify({
+        type: "command",
+        revision: 1,
+        command: {
+          type: "build",
+          building: "road",
+          at: firstCorner,
+          to: firstRoad,
+        },
+      }),
+    );
+    const afterFirstRoad = await hostNext("state");
+    await guestNext("state");
+    const secondCorner = bestSetupSettlement(afterFirstRoad.session.game);
+    guest.send(
+      JSON.stringify({
+        type: "command",
+        revision: 2,
+        command: { type: "build", building: "settlement", at: secondCorner },
+      }),
+    );
+    const secondHost = await hostNext("state");
+    await guestNext("state");
+    const secondRoad = vertices[secondCorner].neighbors.find((neighbor) =>
+      legalSetupRoad(secondHost.session.game, secondCorner, neighbor),
+    );
+    guest.send(
+      JSON.stringify({
+        type: "command",
+        revision: 3,
+        command: {
+          type: "build",
+          building: "road",
+          at: secondCorner,
+          to: secondRoad,
+        },
+      }),
+    );
+    await hostNext("state");
+    await guestNext("state");
+    guest.send(
+      JSON.stringify({
+        type: "command",
+        revision: 4,
         command: { type: "roll" },
       }),
     );
@@ -347,12 +442,12 @@ test(
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 0,
+        revision: 4,
         command: { type: "roll" },
       }),
     );
-    const rolled = await hostNext("state");
-    const guestRolled = await guestNext("state");
+    let rolled = await hostNext("state");
+    let guestRolled = await guestNext("state");
     assert.deepEqual(rolled.session.names, initialHost.session.names);
     assert.match(rolled.activity, /^AmberFox#1234 rolled /);
     assert.equal(rolled.session.game.phase, "build");
@@ -367,24 +462,82 @@ test(
     guest.send(
       JSON.stringify({
         type: "command",
-        revision: 1,
+        revision: 5,
         command: { type: "accept" },
       }),
     );
     assert.match((await guestNext("error")).reason, /no trade/i);
+    // Starting hands are empty. Play until players can exchange cards.
+    const resources = ["wood", "brick", "wheat", "ore", "sheep"];
+    const trade = () => {
+      const hostHand = rolled.session.game.players[0].hand;
+      const guestHand = guestRolled.session.game.players[1].hand;
+      for (const give of resources)
+        for (const receive of resources)
+          if (give !== receive && hostHand[give] > 0 && guestHand[receive] > 0)
+            return { give, receive };
+      return null;
+    };
+    for (let attempts = 0; !trade() && attempts < 120; attempts++) {
+      await delay(125);
+      let revision = rolled.session.revision;
+      host.send(
+        JSON.stringify({
+          type: "command",
+          revision,
+          command: { type: "endTurn" },
+        }),
+      );
+      let hostState = await hostNext("state");
+      await guestNext("state");
+      revision = hostState.session.revision;
+      guest.send(
+        JSON.stringify({
+          type: "command",
+          revision,
+          command: { type: "roll" },
+        }),
+      );
+      hostState = await hostNext("state");
+      await guestNext("state");
+      revision = hostState.session.revision;
+      guest.send(
+        JSON.stringify({
+          type: "command",
+          revision,
+          command: { type: "endTurn" },
+        }),
+      );
+      hostState = await hostNext("state");
+      await guestNext("state");
+      revision = hostState.session.revision;
+      host.send(
+        JSON.stringify({
+          type: "command",
+          revision,
+          command: { type: "roll" },
+        }),
+      );
+      rolled = await hostNext("state");
+      guestRolled = await guestNext("state");
+    }
+    const offer = trade();
+    assert.ok(offer, "The players should eventually obtain tradable resources");
+    const { give, receive } = offer;
+    const offerRevision = rolled.session.revision;
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 1,
-        command: { type: "offer", give: "wood", receive: "ore" },
+        revision: offerRevision,
+        command: { type: "offer", give, receive },
       }),
     );
     await hostNext("state");
-    assert.equal((await guestNext("state")).session.offer.give, "wood");
+    assert.equal((await guestNext("state")).session.offer.give, give);
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 2,
+        revision: offerRevision + 1,
         command: { type: "accept" },
       }),
     );
@@ -392,28 +545,36 @@ test(
     guest.send(
       JSON.stringify({
         type: "command",
-        revision: 2,
+        revision: offerRevision + 1,
         command: { type: "accept" },
       }),
     );
     const traded = await hostNext("state");
     const guestTraded = await guestNext("state");
+    assert.deepEqual(traded.publicAction, {
+      type: "trade",
+      actor: 0,
+      other: 1,
+      give,
+      receive,
+    });
+    assert.deepEqual(guestTraded.publicAction, traded.publicAction);
     assert.equal(traded.session.offer, null);
     assert.equal(
-      traded.session.game.players[0].hand.wood,
-      rolled.session.game.players[0].hand.wood - 1,
+      traded.session.game.players[0].hand[give],
+      rolled.session.game.players[0].hand[give] - 1,
     );
     assert.equal(
-      traded.session.game.players[0].hand.ore,
-      rolled.session.game.players[0].hand.ore + 1,
+      traded.session.game.players[0].hand[receive],
+      rolled.session.game.players[0].hand[receive] + 1,
     );
     assert.equal(
-      guestTraded.session.game.players[1].hand.wood,
-      guestRolled.session.game.players[1].hand.wood + 1,
+      guestTraded.session.game.players[1].hand[give],
+      guestRolled.session.game.players[1].hand[give] + 1,
     );
     assert.equal(
-      guestTraded.session.game.players[1].hand.ore,
-      guestRolled.session.game.players[1].hand.ore - 1,
+      guestTraded.session.game.players[1].hand[receive],
+      guestRolled.session.game.players[1].hand[receive] - 1,
     );
     for (const resource of ["wood", "brick", "wheat", "ore", "sheep"]) {
       assert.equal(traded.session.game.players[1].hand[resource], 0);
@@ -422,7 +583,7 @@ test(
     host.send(
       JSON.stringify({
         type: "command",
-        revision: 3,
+        revision: offerRevision + 2,
         command: { type: "endTurn" },
       }),
     );
@@ -506,6 +667,8 @@ test(
       (await replacement.next("credentials")).room,
       firstCredentials.room,
     );
+    assert.equal((await replacement.next("peer-reconnected")).seat, 0);
+    assert.equal((await second.next("peer-reconnected")).seat, 0);
     await replacement.next("state");
     await second.next("state");
     let staleCommandReachedPeer = false;
@@ -658,15 +821,20 @@ test(
       (await resumed.next("credentials")).room,
       secondCredentials.room,
     );
-    await first.next("peer-reconnected");
+    assert.equal((await first.next("peer-reconnected")).seat, 1);
+    assert.equal((await resumed.next("peer-reconnected")).seat, 1);
     assert.equal((await resumed.next("state")).session.revision, 0);
-    await first.next("state");
+    const resumedState = await first.next("state");
     assert.equal((await resumed.next("chat")).text, "Hello opponent");
     first.socket.send(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "roll" },
+        command: {
+          type: "build",
+          building: "settlement",
+          at: bestSetupSettlement(resumedState.session.game),
+        },
       }),
     );
     assert.equal((await resumed.next("state")).session.revision, 1);
@@ -685,7 +853,7 @@ test(
       }),
     );
     await reconnected.next("credentials");
-    await resumed.next("peer-reconnected");
+    assert.equal((await resumed.next("peer-reconnected")).seat, 0);
     assert.equal((await reconnected.next("state")).session.revision, 1);
     assert.equal((await resumed.next("state")).session.revision, 1);
 
@@ -853,13 +1021,17 @@ test(
     second.socket.send(JSON.stringify({ type: "findMatch" }));
     const firstCredentials = await first.next("credentials");
     const secondCredentials = await second.next("credentials");
-    await first.next("state");
+    const initialState = await first.next("state");
     await second.next("state");
     first.socket.send(
       JSON.stringify({
         type: "command",
         revision: 0,
-        command: { type: "roll" },
+        command: {
+          type: "build",
+          building: "settlement",
+          at: bestSetupSettlement(initialState.session.game),
+        },
       }),
     );
     assert.equal((await first.next("state")).session.revision, 1);
@@ -897,6 +1069,13 @@ test(
     assert.equal(row.player_one, "3a3058ff-1424-4cc9-9587-96f19eb23161");
     original.server.kill();
     await once(original.server, "exit");
+    // Older snapshots advanced to player two immediately after player one's
+    // settlement. Recovery must return player one to the new road step.
+    assert.equal(row.session.game.phase, "setup");
+    assert.equal(row.session.game.players[0].settlements.length, 1);
+    assert.equal(row.session.game.players[0].roads.length, 0);
+    assert.equal(row.session.game.players[1].settlements.length, 0);
+    row.session.game.turn = 1;
     const restarted = await startServer();
     const restoredFirst = connect(restarted.port);
     const restoredSecond = connect(restarted.port);
@@ -923,8 +1102,12 @@ test(
     assert.equal(recoveredCredentials.room, firstCredentials.room);
     assert.notEqual(recoveredCredentials.token, firstCredentials.token);
     await restoredSecond.next("credentials");
-    assert.equal((await restoredFirst.next("state")).session.revision, 1);
-    assert.equal((await restoredSecond.next("state")).session.revision, 1);
+    const restoredState = await restoredFirst.next("state");
+    assert.equal(restoredState.session.revision, 1);
+    assert.equal(restoredState.session.game.turn, 0);
+    const restoredSecondState = await restoredSecond.next("state");
+    assert.equal(restoredSecondState.session.revision, 1);
+    assert.equal(restoredSecondState.session.game.turn, 0);
     assert.equal((await restoredSecond.next("chat")).text, "Test message");
     const obsolete = connect(restarted.port);
     await once(obsolete.socket, "open");
@@ -947,11 +1130,20 @@ test(
     assert.equal(restoredReport.message, "Test message");
     assert.equal(restoredReport.reviewed_at, reviewedAt);
     failRoomWrites = true;
+    const resumedCorner = restoredState.session.game.players[0].settlements[0];
+    const resumedRoad = vertices[resumedCorner].neighbors.find((neighbor) =>
+      legalSetupRoad(restoredState.session.game, resumedCorner, neighbor),
+    );
     restoredFirst.socket.send(
       JSON.stringify({
         type: "command",
         revision: 1,
-        command: { type: "endTurn" },
+        command: {
+          type: "build",
+          building: "road",
+          at: resumedCorner,
+          to: resumedRoad,
+        },
       }),
     );
     assert.match(

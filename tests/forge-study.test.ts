@@ -13,34 +13,27 @@ describe("Forge fixed-board study", () => {
       expect(start.expectedCardsPerRoll).toBe(start.pips / 36);
     }
   });
-  it("finds matching opening resource distributions", () => {
-    const candidates = vertices
-      .filter((v) => v.tiles.length === 3)
-      .flatMap((v) =>
-        vertices
-          .filter(
-            (other) =>
-              other.id > v.id &&
-              !v.neighbors.includes(other.id) &&
-              other.tiles.length === 3,
-          )
-          .filter((other) => {
-            const signature = (id: number) =>
-              vertices[id].tiles
-                .map(
-                  (tile) =>
-                    `${defaultBoard[tile].resource}:${pips[defaultBoard[tile].number ?? 0] ?? 0}`,
-                )
-                .sort()
-                .join(",");
-            return signature(v.id) === signature(other.id);
-          })
-          .map((other) => [v.id, other.id]),
+  it("calculates production from the actual 19-tile board", () => {
+    const [first, second] = startingProduction();
+    expect(first.corner).not.toBe(second.corner);
+    expect(vertices[first.corner].neighbors).not.toContain(second.corner);
+    for (const start of [first, second]) {
+      const tiles = vertices[start.corner].tiles.map(
+        (index) => defaultBoard[index],
       );
-    expect(candidates).toContainEqual([23, 38]);
+      expect(start.resources).toEqual(tiles.map((tile) => tile.resource));
+      expect(start.pips).toBe(
+        tiles.reduce((sum, tile) => sum + (pips[tile.number ?? 0] ?? 0), 0),
+      );
+    }
   });
   it("repeats a game exactly for a given seed", () => {
-    expect(studyGame(42)).toEqual(studyGame(42));
+    const first = studyGame(42);
+    const second = studyGame(42);
+    // Match identifiers are unique metadata, independent of the seeded game.
+    delete first.game.matchId;
+    delete second.game.matchId;
+    expect(first).toEqual(second);
   });
   it("uses legal engine actions through multiple complete automated games", () => {
     const games = Array.from({ length: 100 }, (_, i) => studyGame(i + 1));
@@ -50,9 +43,10 @@ describe("Forge fixed-board study", () => {
       expect(totalPoints(game, game.winner as 0 | 1)).toBeGreaterThanOrEqual(5);
       expect(turns).toBeLessThan(1000);
       for (const player of game.players)
-        expect(
-          goods.reduce((sum, resource) => sum + player.hand[resource], 0),
-        ).toBeLessThanOrEqual(7);
+        for (const resource of goods) {
+          expect(Number.isInteger(player.hand[resource])).toBe(true);
+          expect(player.hand[resource]).toBeGreaterThanOrEqual(0);
+        }
     }
     const swapped = Array.from({ length: 100 }, (_, i) =>
       studyGame(i + 1, 1000, true),

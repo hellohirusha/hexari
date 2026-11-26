@@ -181,7 +181,7 @@ export default function Companion() {
         <div className="workspace-header-brand">
           <a
             className="workspace-back"
-            href="/"
+            href="/?from=tools"
             aria-label="Back to board analyzer"
             title="Back to board analyzer"
           >
@@ -189,7 +189,7 @@ export default function Companion() {
               <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
             </svg>
           </a>
-          <a className="brand" href="/" aria-label="Hexari home">
+          <a className="brand" href="/?from=tools" aria-label="Hexari home">
             <BrandMark />
             <span>
               hexari<small>BOARD INTELLIGENCE</small>

@@ -17,7 +17,9 @@ describe("Forge placement sounds", () => {
   });
 
   it("distinguishes a road from an upgrade replacing a settlement", () => {
-    const before = transition(newGame(0), { type: "roll", total: 7 });
+    const before = transition(newGame(0), { type: "roll", total: 6 });
+    before.players[0].hand.wood = 1;
+    before.players[0].hand.brick = 1;
     const at = before.players[0].settlements[0];
     const to = vertices[at].neighbors.find((id) => legalRoad(before, at, id))!;
     const road = transition(before, {
@@ -48,7 +50,7 @@ describe("Forge placement sounds", () => {
   });
 
   it("recognizes a settlement placed later in the game", () => {
-    const game = transition(newGame(0), { type: "roll", total: 7 });
+    const game = transition(newGame(0), { type: "roll", total: 6 });
     const at = game.players[0].settlements[0];
     const next = vertices[at].neighbors[0];
     const destination = vertices[next].neighbors.find((id) => id !== at)!;

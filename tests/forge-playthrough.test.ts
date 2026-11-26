@@ -15,6 +15,25 @@ import {
 // Deterministic automated players use only the public transition function.
 function play(game: Game, roll: number, now: number): Game {
   let state = transition(game, { type: "roll", total: roll });
+  for (const seat of [0, 1] as const) {
+    while (
+      state.phase === "discard" &&
+      (state.discardRemaining?.[seat] ?? 0) > 0
+    ) {
+      const resource = goods.find((item) => state.players[seat].hand[item] > 0);
+      if (!resource)
+        throw new Error("A discard is owed without available cards");
+      const next = transition(state, { type: "sevenDiscard", seat, resource });
+      if (next === state) throw new Error("Required discard was rejected");
+      state = next;
+    }
+  }
+  if (state.phase === "robber") {
+    const tile = defaultBoard.findIndex(
+      (_, index) => index !== state.robberTile,
+    );
+    state = transition(state, { type: "moveRobber", tile, random: 0.5 });
+  }
   for (let action = 0; action < 12 && state.phase === "build"; action++) {
     const player = state.players[state.turn];
     let next = state;
@@ -97,15 +116,6 @@ function play(game: Game, roll: number, now: number): Game {
               : "ore";
       if (give && give !== receive)
         next = transition(state, { type: "bank", give, receive });
-    }
-    if (
-      next === state &&
-      goods.reduce((sum, resource) => sum + player.hand[resource], 0) >= 7
-    ) {
-      const discard = [...goods]
-        .filter((resource) => player.hand[resource] > 0)
-        .sort((a, b) => player.hand[a] - player.hand[b])[0];
-      next = transition(state, { type: "discard", resource: discard });
     }
     if (next === state) break;
     state = next;

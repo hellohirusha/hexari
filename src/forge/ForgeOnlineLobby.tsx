@@ -11,6 +11,8 @@ export type OnlineConnection = {
   seat: Seat;
   session: OnlineSession;
   peerConnected: boolean;
+  /** A newly joined match, as opposed to recovery of an existing room. */
+  isNewGame?: boolean;
 };
 
 export const ONLINE_SESSION_KEY = "forge-online-session";
@@ -119,8 +121,10 @@ export default function ForgeOnlineLobby({
         openedSocket = connectedSocket;
         candidateSocket.current = connectedSocket;
         const socket = connectedSocket;
+        let resumingConnection = false;
         const start = async () => {
           const saved = onlineCredentials();
+          resumingConnection = mode !== "invite" && Boolean(saved);
           try {
             let accessToken: string | undefined;
             if (!saved) {
@@ -224,6 +228,7 @@ export default function ForgeOnlineLobby({
                   seat: data.seat,
                   session: data.session,
                   peerConnected,
+                  isNewGame: false,
                 });
                 return;
               }
@@ -234,6 +239,7 @@ export default function ForgeOnlineLobby({
                 seat: data.seat,
                 session: data.session,
                 peerConnected,
+                isNewGame: !resumingConnection,
               });
             } else if (
               data.type === "closed" &&

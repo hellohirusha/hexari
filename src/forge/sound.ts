@@ -60,8 +60,8 @@ export const cueFiles: Record<Cue, string> = {
   ).href,
   turn: new URL("./assets/audio/casino-audio_card-slide-4.ogg", import.meta.url)
     .href,
-  win: new URL("./assets/audio/crowd-cheer.ogg", import.meta.url).href,
-  lose: new URL("./assets/audio/game-over.ogg", import.meta.url).href,
+  win: new URL("./assets/audio/victory.ogg", import.meta.url).href,
+  lose: new URL("./assets/audio/defeat.ogg", import.meta.url).href,
   blocked: new URL(
     "./assets/audio/impact-sounds_impactGeneric_light_000.ogg",
     import.meta.url,
@@ -128,6 +128,23 @@ export function preparePlacementSounds() {
     "citySelect",
   ] as const) {
     if (preparedPlacements.has(cue)) continue;
+    try {
+      const audio = new Audio(cueFiles[cue]);
+      audio.preload = "auto";
+      audio.load();
+      preparedPlacements.set(cue, audio);
+    } catch {
+      // Playback remains best-effort if preparation is unavailable.
+    }
+  }
+}
+
+/** Preload the remaining interaction sounds before players need them. */
+export function prepareSoundEffects() {
+  preparePlacementSounds();
+  for (const cue of Object.keys(cueFiles) as Cue[]) {
+    if (cue === "win" || cue === "lose" || preparedPlacements.has(cue))
+      continue;
     try {
       const audio = new Audio(cueFiles[cue]);
       audio.preload = "auto";

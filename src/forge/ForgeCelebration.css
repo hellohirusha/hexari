@@ -1,0 +1,67 @@
+.forge-celebration {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.forge-celebration span {
+  position: absolute;
+  left: var(--confetti-x);
+  top: -24px;
+  width: 9px;
+  height: 16px;
+  border-radius: 2px;
+  background: #fbc45e;
+  animation: forge-confetti-cannon var(--confetti-duration) ease-in
+    var(--confetti-delay) both;
+}
+
+.forge-celebration span:nth-child(6n + 2) {
+  background: #f7807d;
+}
+.forge-celebration span:nth-child(6n + 3) {
+  background: #79d8d1;
+  width: 7px;
+}
+.forge-celebration span:nth-child(6n + 4) {
+  background: #caa5f5;
+  height: 11px;
+  border-radius: 50%;
+}
+.forge-celebration span:nth-child(6n + 5) {
+  background: #aadd82;
+  width: 6px;
+}
+.forge-celebration span:nth-child(6n) {
+  background: #f4e6bf;
+  height: 12px;
+}
+
+@keyframes forge-confetti-cannon {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -3vh, 0) rotate(0);
+  }
+  8% {
+    opacity: 1;
+  }
+  28% {
+    transform: translate3d(var(--confetti-mid-drift), 22vh, 0) rotate(200deg);
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--confetti-drift), 110vh, 0)
+      rotate(var(--confetti-spin));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-celebration {
+    display: none;
+  }
+}

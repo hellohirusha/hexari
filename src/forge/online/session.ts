@@ -1,6 +1,6 @@
 import {
   goods,
-  bestSetupSettlement,
+  setupNeedsRoad,
   transition,
   type Building,
   type Game,
@@ -26,6 +26,8 @@ export type OnlineCommand =
     }
   | { type: "bank"; give: Goods; receive: Goods }
   | { type: "discard"; resource: Goods }
+  | { type: "sevenDiscard"; resource: Goods }
+  | { type: "moveRobber"; tile: number }
   | { type: "offer"; give: Goods; receive: Goods }
   | { type: "accept" | "decline" };
 
@@ -41,6 +43,7 @@ export function applyOnlineCommand(
   command: OnlineCommand,
   now: number,
   rollDice: () => [number, number],
+  random: () => number = Math.random,
 ): CommandResult {
   if (
     (actor !== 0 && actor !== 1) ||
@@ -52,6 +55,20 @@ export function applyOnlineCommand(
     return { ok: false, reason: "Game is not active." };
   const { game, offer } = session;
   const nextRevision = revision + 1;
+  if (command.type === "sevenDiscard") {
+    if (!goods.includes(command.resource))
+      return { ok: false, reason: "Invalid resource." };
+    const next = transition(game, {
+      type: "sevenDiscard",
+      seat: actor,
+      resource: command.resource,
+    });
+    if (next === game) return { ok: false, reason: "Discard is not required." };
+    return {
+      ok: true,
+      session: { ...session, game: next, offer: null, revision: nextRevision },
+    };
+  }
   if (command.type === "accept" || command.type === "decline") {
     if (
       !offer ||
@@ -106,7 +123,9 @@ export function applyOnlineCommand(
           ok: false,
           reason:
             game.phase === "setup"
-              ? "Place your starting settlement first."
+              ? setupNeedsRoad(game)
+                ? "Place your starting road first."
+                : "Place your starting settlement first."
               : "Dice already rolled.",
         };
       dice = rollDice();
@@ -120,7 +139,12 @@ export function applyOnlineCommand(
     }
     case "endTurn":
       if (game.phase === "setup")
-        return { ok: false, reason: "Place your starting settlement first." };
+        return {
+          ok: false,
+          reason: setupNeedsRoad(game)
+            ? "Place your starting road first."
+            : "Place your starting settlement first.",
+        };
       if (game.phase === "roll")
         return { ok: false, reason: "Roll before ending your turn." };
       next = transition(game, { type: "endTurn", now });
@@ -144,6 +168,15 @@ export function applyOnlineCommand(
         return { ok: false, reason: "Invalid resource." };
       next = transition(game, command);
       break;
+    case "moveRobber":
+      if (!Number.isSafeInteger(command.tile))
+        return { ok: false, reason: "Invalid tile." };
+      next = transition(game, {
+        type: "moveRobber",
+        tile: command.tile,
+        random: random(),
+      });
+      break;
     default:
       return { ok: false, reason: "Unknown action." };
   }
@@ -161,21 +194,15 @@ export function timeoutOnlineTurn(
   now: number,
   rollDice: () => [number, number],
 ): CommandResult {
-  if (session.game.phase === "setup") {
-    const at = bestSetupSettlement(session.game);
-    if (at === undefined)
-      return {
-        ok: false,
-        reason: "No starting settlement location available.",
-      };
-    return applyOnlineCommand(
-      session,
-      session.game.turn,
-      session.revision,
-      { type: "build", building: "settlement", at },
-      now,
-      rollDice,
-    );
+  if (["setup", "discard", "robber"].includes(session.game.phase)) {
+    return {
+      ok: true,
+      session: {
+        ...session,
+        revision: session.revision + 1,
+        game: { ...session.game, turnStarted: now },
+      },
+    };
   }
   let current = session;
   let dice: [number, number] | undefined;
@@ -191,6 +218,15 @@ export function timeoutOnlineTurn(
     if (!rolled.ok) return rolled;
     current = rolled.session;
     dice = rolled.dice;
+    if (current.game.phase === "discard" || current.game.phase === "robber") {
+      return {
+        ...rolled,
+        session: {
+          ...current,
+          game: { ...current.game, turnStarted: now },
+        },
+      };
+    }
   }
   const ended = applyOnlineCommand(
     current,

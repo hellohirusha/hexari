@@ -1,0 +1,18 @@
+.tool-panel .tracker-first-roll {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  margin: 16px 0;
+}
+
+.tool-panel .tracker-first-roll span {
+  min-width: 0;
+}
+
+.tools-page .tool-panel .tracker-first-roll input[type="number"] {
+  flex: 0 0 5rem;
+  width: 5rem;
+  min-width: 0;
+  margin: 0;
+}

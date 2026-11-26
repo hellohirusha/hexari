@@ -49,8 +49,8 @@ describe("Forge audio", () => {
     expect(cueFiles.wood).toContain("chop");
     expect(cueFiles.ore).toContain("Mining");
     expect(cueFiles.sheep).toContain("sheep");
-    expect(cueFiles.win).toContain("crowd-cheer.ogg");
-    expect(cueFiles.lose).toContain("game-over.ogg");
+    expect(cueFiles.win).toContain("victory.ogg");
+    expect(cueFiles.lose).toContain("defeat.ogg");
     expect(
       new Set([cueFiles.road, cueFiles.settlement, cueFiles.city]).size,
     ).toBe(3);
@@ -63,6 +63,20 @@ describe("Forge audio", () => {
     expect(players[0].play).toHaveBeenCalledOnce();
     stopSoundEffects();
     expect(players[0].pause).toHaveBeenCalledOnce();
+  });
+
+  it("preloads interaction cues once and reuses them when played", async () => {
+    const { cueFiles, prepareSoundEffects, soundCue } =
+      await import("../src/forge/sound");
+    prepareSoundEffects();
+    const prepared = players.length;
+    prepareSoundEffects();
+    expect(players).toHaveLength(prepared);
+    const dice = players.find((audio) => audio.src === cueFiles.roll);
+    expect(dice?.preload).toBe("auto");
+    soundCue("roll");
+    expect(dice?.play).toHaveBeenCalledOnce();
+    expect(players).toHaveLength(prepared);
   });
 
   it("prepares placement sounds once and reuses them without interrupting overlapping sounds", async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import ForgeDialogAction from "./ForgeDialogAction";
 
 export default function ForgePause({
   onResume,
@@ -31,17 +32,14 @@ export default function ForgePause({
         {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}
       </strong>
       <div className="forge-confirm-actions">
-        <button
-          type="button"
-          className="button primary"
+        <ForgeDialogAction
+          label="Resume game"
+          icon="resume"
+          primary
           onClick={onResume}
           autoFocus
-        >
-          Resume game
-        </button>
-        <button type="button" className="button ghost" onClick={onLeave}>
-          Leave game
-        </button>
+        />
+        <ForgeDialogAction label="Leave game" icon="leave" onClick={onLeave} />
       </div>
     </dialog>
   );

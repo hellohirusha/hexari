@@ -1,0 +1,22 @@
+.forge-mode-dialog .forge-welcome-actions {
+  grid-template-columns: minmax(0, 1fr) 20px max-content minmax(0, 1fr);
+}
+
+.forge-mode-dialog .forge-mode-choice {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  text-align: left;
+}
+
+.forge-mode-dialog .forge-mode-choice-icon {
+  display: block;
+  grid-column: 2;
+  width: 20px;
+  height: 20px;
+}
+
+.forge-mode-dialog .forge-mode-choice-label {
+  grid-column: 3;
+}

@@ -15,7 +15,11 @@ vi.mock("react", async (load) => {
 import ForgeSettings from "../src/forge/ForgeSettings";
 
 const noop = () => {};
-function renderSettings(sound: boolean, shortcuts: boolean) {
+function renderSettings(
+  sound: boolean,
+  shortcuts: boolean,
+  timerRunning = true,
+) {
   return renderToStaticMarkup(
     <ForgeSettings
       sound={sound}
@@ -27,11 +31,21 @@ function renderSettings(sound: boolean, shortcuts: boolean) {
       shortcuts={shortcuts}
       onShortcuts={noop}
       onClose={noop}
+      timerRunning={timerRunning}
     />,
   );
 }
 
 describe("Forge settings accessibility", () => {
+  it("omits the running timer notice when the timer has stopped", () => {
+    harness.page = "Account";
+    expect(renderSettings(false, false, false)).not.toContain(
+      "The turn timer continues while settings are open.",
+    );
+    expect(renderSettings(false, false, true)).toContain(
+      "The turn timer continues while settings are open.",
+    );
+  });
   it.each([true, false])("labels the sound toggle when sound is %s", (on) => {
     harness.page = "Audio";
     const html = renderSettings(on, false);

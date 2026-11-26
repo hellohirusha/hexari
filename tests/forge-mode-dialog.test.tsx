@@ -17,6 +17,8 @@ describe("Forge game selection", () => {
     expect(html).toContain("Online 1 vs. 1");
     expect(html).not.toContain("disabled");
     expect(html).not.toContain("Resume game");
+    expect(html.match(/class="forge-mode-choice-icon"/g)).toHaveLength(3);
+    expect(html.match(/aria-hidden="true"/g)).toHaveLength(3);
   });
   it("offers resume when a saved game exists", () => {
     const html = renderToStaticMarkup(
@@ -32,5 +34,7 @@ describe("Forge game selection", () => {
     expect(html).not.toContain("Play with bot");
     expect(html).not.toContain("Local 1 vs. 1");
     expect(html).toContain("Online 1 vs. 1");
+    expect(html.match(/class="forge-mode-choice-icon"/g)).toHaveLength(3);
+    expect(html.match(/aria-hidden="true"/g)).toHaveLength(3);
   });
 });

@@ -1,0 +1,82 @@
+html[data-theme] .forge-page dialog.forge-guide-panel {
+  position: fixed;
+  inset: 0;
+  width: min(1100px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  transform: none;
+}
+
+html[data-theme] .forge-page dialog.forge-guide-panel[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-theme] .forge-page .forge-guide-panel .forge-guide-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 200px) 32px;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 22px;
+}
+
+.forge-guide-panel .forge-guide-close {
+  position: static;
+}
+
+.forge-guide-panel .forge-guide-layout {
+  min-height: 0;
+  overflow: auto;
+}
+
+.forge-guide-panel .forge-guide-content {
+  padding: 20px 24px;
+  line-height: 1.5;
+}
+
+.forge-guide-panel .forge-guide-content p {
+  margin-bottom: 12px;
+}
+
+.forge-guide-panel .guide-costs {
+  margin: 12px 0;
+}
+
+.forge-guide-panel .guide-costs > div {
+  padding: 7px 0;
+}
+
+.forge-guide-panel > .forge-guide-actions {
+  flex: none;
+  margin: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--map-line);
+}
+
+.forge-guide-panel::backdrop {
+  background: #071720b8;
+}
+
+@media (max-width: 650px) {
+  html[data-theme] .forge-page .forge-guide-panel .forge-guide-header {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    gap: 8px;
+  }
+
+  .forge-guide-panel .forge-guide-header p {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .forge-guide-panel .forge-guide-close {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .forge-guide-panel .forge-guide-content {
+    padding: 18px;
+  }
+}
