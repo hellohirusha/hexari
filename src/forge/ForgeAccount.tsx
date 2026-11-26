@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
+import ForgeStandings from "./ForgeStandings";
+import ForgeLocalGameStats from "./ForgeLocalGameStats";
 import {
   accountRedirect,
   loadAccountClient,
@@ -253,6 +255,16 @@ export default function ForgeAccount({
     return (
       <div className="forge-account-form">
         <p>Signed in as {session.user.email}</p>
+        <ForgeStandings
+          key={session.user.id}
+          client={client}
+          userId={session.user.id}
+        />
+        <ForgeLocalGameStats
+          key={`local:${session.user.id}`}
+          client={client}
+          userId={session.user.id}
+        />
         <form className="forge-account-form" onSubmit={saveName}>
           <label>
             Player name
