@@ -1,0 +1,56 @@
+.forge-pause.forge-confirm .forge-confirm-actions,
+.forge-result .forge-result-actions {
+  display: flex;
+  flex-flow: row nowrap;
+  justify-content: center;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.forge-dialog-action-tile {
+  flex: 0 1 82px;
+  min-width: 0;
+}
+
+.forge-pause.forge-confirm .forge-confirm-actions .forge-dialog-icon-button,
+.forge-result .forge-result-actions .forge-dialog-icon-button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 72px;
+  padding: 14px;
+  border-radius: 10px;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.forge-dialog-icon-button svg {
+  width: 32px;
+  height: 32px;
+}
+
+.forge-pause.forge-confirm .forge-dialog-icon-button:hover,
+.forge-result .forge-dialog-icon-button:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 0 0 2px #f4cca1,
+    0 8px 18px #07141c80;
+}
+
+.forge-dialog-icon-button:focus-visible {
+  outline: 3px solid #ffe3af;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-dialog-icon-button {
+    transition: none;
+  }
+  .forge-pause.forge-confirm .forge-dialog-icon-button:hover,
+  .forge-result .forge-dialog-icon-button:hover {
+    transform: none;
+  }
+}
