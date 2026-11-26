@@ -1,12 +1,11 @@
 import { initialTheme } from "../shared/ThemeToggle";
 import "./forge.css";
 import PixiTerrain from "../shared/PixiLayer";
-import { playBotTurn } from "./bot";
+import { playBotDiscard, playBotTurn } from "./bot";
 import {
   soundCue,
-  preparePlacementSounds,
+  prepareSoundEffects,
   prepareResultSounds,
-  scheduleSoundCue,
   setMasterVolume,
   startWelcomeMusic,
   stopSoundEffects,
@@ -36,6 +35,7 @@ import {
 } from "./account";
 import { getBotNickname, getOrCreateNickname } from "./nickname";
 import type { Session } from "@supabase/supabase-js";
+import { useLocalGameStats } from "./localGameStats";
 import ForgeOnlineTrade from "./ForgeOnlineTrade";
 import type { OnlineCommand, OnlineSession, Seat } from "./online/session";
 import { isOpponentDeparture } from "./online/opponentDeparture";
@@ -44,10 +44,15 @@ import { reconnectOnlineGame } from "./online/lobbyConnection";
 import { FONT_SIZE_KEY, readFontSize } from "./fontSize";
 import ForgeSettings from "./ForgeSettings";
 import ForgePause from "./ForgePause";
+import ForgeGameMenu from "./ForgeGameMenu";
 import ForgeResult from "./ForgeResult";
+import ForgeFullscreen from "./ForgeFullscreen";
+import { turnTimeRemaining } from "./turnClock";
 import ForgeOpponentLeftNotice from "./ForgeOpponentLeftNotice";
 import ForgeBuildPopover from "./ForgeBuildPopover";
 import ForgeBuildCards from "./ForgeBuildCards";
+import { useResourceMotion } from "./ForgeResourceMotion";
+import { transfersForAction } from "./resourceTransfers";
 import { placementSound } from "./placementSound";
 import { useResultAudio } from "./useResultAudio";
 import { buildKinds, buildOptions } from "./buildOptions";
@@ -57,6 +62,7 @@ import { applyTurnTimeout } from "./turnTimeout";
 import { matchingRollTiles } from "./rollHighlight";
 import { turnLabel } from "./turnLabel";
 import { newPlacementKeys, roadPlacementKey } from "./placementAnimation";
+import { useOpeningPlacements } from "./useOpeningPlacements";
 import BrandMark from "../shared/BrandMark";
 import ForgeScoreName from "./ForgeScoreName";
 import { hexariHomeHref } from "../shared/navigation";
@@ -71,11 +77,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { centers, defaultBoard, vertices } from "./board";
-const forgeGeometry = { centers, x: -80, y: -80, width: 640, height: 530 };
+const forgeGeometry = { centers, x: 5, y: -10, width: 470, height: 390 };
 import {
   goods,
   legalRoad,
+  legalSetupRoad,
   legalSetupSettlement,
+  setupNeedsRoad,
   legalSettlement,
   newGame,
   totalPoints,
@@ -115,11 +123,14 @@ function storedList<T>(
 }
 function restore(): Game {
   try {
-    return parseResumableGame(localStorage.getItem(key)) ?? newGame();
+    return (
+      parseResumableGame(localStorage.getItem(key)) ??
+      newGame(undefined, { manualSetup: true })
+    );
   } catch {
     /* start fresh */
   }
-  return newGame();
+  return newGame(undefined, { manualSetup: true });
 }
 export default function Forge({
   standalone = false,
@@ -178,6 +189,7 @@ export default function Forge({
       ),
     ),
     [resultDismissed, setResultDismissed] = useState(false),
+    [resultCelebrated, setResultCelebrated] = useState(false),
     [menuOpen, setMenuOpen] = useState(false),
     [pausedAt, setPausedAt] = useState<number | null>(null),
     [clock, setClock] = useState(() => Date.now()),
@@ -216,6 +228,8 @@ export default function Forge({
     id: string | null;
     name: string | null;
   }>({ signedIn: false, id: null, name: null });
+  const [accountReady, setAccountReady] = useState(false);
+  useLocalGameStats(game, started && accountReady, opponent, account.id);
   const startedRef = useRef(started);
   useLayoutEffect(() => {
     startedRef.current = started;
@@ -236,10 +250,15 @@ export default function Forge({
             ? name.trim()
             : null,
       });
+      setAccountReady(true);
     };
     void loadAccountClient()
       .then(async (client) => {
-        if (!client || !active) return;
+        if (!active) return;
+        if (!client) {
+          setAccountReady(true);
+          return;
+        }
         const { data } = client.auth.onAuthStateChange((event, session) => {
           authVersion++;
           updateAccount(session);
@@ -255,7 +274,10 @@ export default function Forge({
         if (version === authVersion) updateAccount(result.data.session);
       })
       .catch(() => {
-        if (active) setAccount({ signedIn: false, id: null, name: null });
+        if (active) {
+          setAccount({ signedIn: false, id: null, name: null });
+          setAccountReady(true);
+        }
       });
     return () => {
       active = false;
@@ -296,6 +318,12 @@ export default function Forge({
   const [opponentNotice, setOpponentNotice] = useState<
     "disconnected" | "left" | "recoverable" | null
   >(null);
+  const [peerResumed, setPeerResumed] = useState(false);
+  useEffect(() => {
+    if (!peerResumed) return;
+    const timer = setTimeout(() => setPeerResumed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [peerResumed]);
   const [startNewOnline, setStartNewOnline] = useState(false);
   const onlineSocket = useRef<WebSocket | null>(null);
   const onlineRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -430,6 +458,11 @@ export default function Forge({
     });
   }
   const gameRef = useRef(game);
+  const { opening, beginOpening, cancelOpening } = useOpeningPlacements(
+    started,
+    pixiReady,
+    sound,
+  );
   const previousBoard = useRef<{ game: Game; started: boolean } | null>(null);
   const [animatedPlacements, setAnimatedPlacements] = useState<
     ReadonlySet<string>
@@ -444,7 +477,7 @@ export default function Forge({
     );
   }, [game, started]);
   useEffect(() => {
-    preparePlacementSounds();
+    prepareSoundEffects();
     prepareResultSounds();
   }, []);
   const diceDisplayRef = useRef<HTMLSpanElement>(null);
@@ -513,6 +546,14 @@ export default function Forge({
       session,
       peerConnected: initialPeerConnected,
     } = connection;
+    setPixiReady(false);
+    if (
+      connection.isNewGame &&
+      session.revision === 0 &&
+      session.game.phase === "roll"
+    )
+      beginOpening(session.game);
+    else cancelOpening();
     onlineSocket.current = socket;
     setOpponentNotice(
       !initialPeerConnected && session.game.phase !== "end"
@@ -531,6 +572,7 @@ export default function Forge({
     setOpponent("online");
     setGame(session.game);
     setResultDismissed(false);
+    setResultCelebrated(false);
     setDiceFaces(null);
     setTarget(null);
     setBuildSelection(null);
@@ -579,6 +621,12 @@ export default function Forge({
             setMessage("Waiting for the other player to reconnect.");
           } else if (data.type === "peer-reconnected") {
             peerConnected = true;
+            setOpponentNotice(null);
+            if (
+              (data.seat === 0 || data.seat === 1) &&
+              data.seat !== onlineRef.current?.seat
+            )
+              setPeerResumed(true);
             setMessage("");
           } else if (
             data.type === "chat" &&
@@ -631,6 +679,8 @@ export default function Forge({
             const previous = onlineRef.current;
             if (!previous) return;
             const nextSession = data.session as OnlineSession;
+            if (nextSession.revision === previous.session.revision + 1)
+              showResourceMotion(transfersForAction(data.publicAction));
             if (
               soundRef.current &&
               nextSession.revision === previous.session.revision + 1
@@ -685,10 +735,12 @@ export default function Forge({
             }
             if (data.recoverable !== true)
               sessionStorage.removeItem(ONLINE_SESSION_KEY);
-            if (data.code === "opponent_timeout" && data.recoverable === true)
-              setOpponentNotice("recoverable");
-            else if (isOpponentDeparture(data.code, data.recoverable))
-              setOpponentNotice("left");
+            if (gameRef.current.phase !== "end") {
+              if (data.code === "opponent_timeout" && data.recoverable === true)
+                setOpponentNotice("recoverable");
+              else if (isOpponentDeparture(data.code, data.recoverable))
+                setOpponentNotice("left");
+            }
             updateConnection(false);
             if (onlineRef.current) {
               onlineRef.current = {
@@ -826,7 +878,9 @@ export default function Forge({
     if (rollEffectTimer.current) clearTimeout(rollEffectTimer.current);
     setRollEffect(null);
     setResultDismissed(false);
-    const fresh = newGame(now);
+    setResultCelebrated(false);
+    const fresh = newGame(now, { manualSetup: true });
+    cancelOpening();
     gameRef.current = fresh;
     setGame(fresh);
     setClock(now);
@@ -840,16 +894,41 @@ export default function Forge({
   }
   const isBotTurn =
     opponent === "bot" && game.turn === 1 && game.phase !== "end";
+  const botMustDiscard =
+    opponent === "bot" &&
+    game.phase === "discard" &&
+    (game.discardRemaining?.[1] ?? 0) > 0;
   const botTurn =
     isBotTurn ||
     (opponent === "online" &&
       (!online?.connected || online.pending || online.seat !== game.turn));
+  const discardSeat: Seat =
+    opponent === "online"
+      ? (online?.seat ?? 0)
+      : opponent === "bot"
+        ? 0
+        : (game.discardRemaining?.[0] ?? 0) > 0
+          ? 0
+          : 1;
   const handPlayer =
     opponent === "online"
       ? (online?.seat ?? 0)
       : opponent === "bot"
         ? 0
-        : game.turn;
+        : game.phase === "discard"
+          ? discardSeat
+          : game.turn;
+  const canDiscard =
+    game.phase === "discard" &&
+    (game.discardRemaining?.[discardSeat] ?? 0) > 0 &&
+    (opponent !== "online" || (!!online?.connected && !online.pending));
+  const robberTile = game.robberTile;
+  const robberOrigin =
+    robberTile ?? defaultBoard.findIndex((tile) => tile.resource === "desert");
+  const canMoveRobber =
+    game.phase === "robber" && !botTurn && pausedAt === null;
+  const { show: showResourceMotion, overlay: resourceMotionOverlay } =
+    useResourceMotion(handPlayer);
   const displayName = account.name ?? guestNickname;
   const playerNames: [string, string] =
     opponent === "hotseat"
@@ -876,22 +955,50 @@ export default function Forge({
       ? buildSelection.building
       : null;
   useEffect(() => {
-    if (!started || !isBotTurn || pausedAt !== null) return;
+    if (
+      !started ||
+      pausedAt !== null ||
+      (!isBotTurn && !botMustDiscard) ||
+      (game.phase === "discard" && !botMustDiscard)
+    )
+      return;
     const timer = setTimeout(() => {
+      if (botMustDiscard) {
+        const next = playBotDiscard(game);
+        if (next !== game) {
+          gameRef.current = next;
+          setGame(next);
+          setActivity((previous) =>
+            [...previous, `${botNickname} (Bot) discarded cards.`].slice(-100),
+          );
+        }
+        return;
+      }
       const first = Math.floor(Math.random() * 6) + 1,
         second = Math.floor(Math.random() * 6) + 1;
-      const result = playBotTurn(game, first + second, Date.now());
-      const playBotCue = (cue: Cue) => {
-        if (!sound) return;
-        if (game.phase === "roll") scheduleSoundCue(cue, 500);
-        else soundCue(cue);
-      };
       if (game.phase === "roll") {
+        const total = first + second;
         setDiceFaces([first, second]);
         setDiceAnimation((n) => n + 1);
-        showRollEffect(first + second);
+        showRollEffect(total);
         if (sound) soundCue("roll");
+        const next = transition(game, { type: "roll", total });
+        gameRef.current = next;
+        setGame(next);
+        const actions = [`Rolled ${total}`];
+        setMessage(`${botNickname} (Bot): ${actions.join(". ")}.`);
+        setActivity((previous) =>
+          [
+            ...previous,
+            ...actions.map((action) => `${botNickname} (Bot): ${action}`),
+          ].slice(-100),
+        );
+        return;
       }
+      const botMovements: import("./resourceTransfers").ResourceTransfer[] = [];
+      const result = playBotTurn(game, first + second, Date.now(), (action) => {
+        botMovements.push(...transfersForAction(action));
+      });
       setMessage(`${botNickname} (Bot): ${result.actions.join(". ")}.`);
       setActivity((previous) =>
         [
@@ -900,6 +1007,7 @@ export default function Forge({
         ].slice(-100),
       );
       const placement = placementSound(game, result.game);
+      showResourceMotion(botMovements);
       if (sound && placement) soundCue(placement);
       if (
         sound &&
@@ -907,11 +1015,21 @@ export default function Forge({
         !placement &&
         result.actions.some((action) => action.startsWith("Traded"))
       )
-        playBotCue("trade");
+        soundCue("trade");
       setGame(result.game);
-    }, 800);
+    }, 1200);
     return () => clearTimeout(timer);
-  }, [started, isBotTurn, game, sound, pausedAt, showRollEffect, botNickname]);
+  }, [
+    started,
+    isBotTurn,
+    botMustDiscard,
+    game,
+    sound,
+    pausedAt,
+    showRollEffect,
+    botNickname,
+    showResourceMotion,
+  ]);
   useEffect(() => {
     if (
       !started ||
@@ -933,20 +1051,36 @@ export default function Forge({
         gameRef.current = next;
         setTarget(null);
         setMessage(
-          current.progressed !== true &&
-            current.turn === 0 &&
-            current.phase === "roll"
-            ? "Roll the dice to begin."
-            : "Time is up. Pass the device to the next player.",
+          current.phase === "setup"
+            ? setupNeedsRoad(current)
+              ? "Choose an edge for your starting road."
+              : "Choose a starting corner."
+            : current.phase === "discard"
+              ? "Complete the required discards to continue."
+              : current.phase === "robber"
+                ? "Move the robber to continue."
+                : current.progressed !== true &&
+                    current.turn === 0 &&
+                    current.phase === "roll"
+                  ? "Roll the dice to begin."
+                  : "Time is up. Pass the device to the next player.",
         );
         setActivity((previous) =>
           [
             ...previous,
-            current.progressed !== true &&
-            current.turn === 0 &&
-            current.phase === "roll"
-              ? "Waiting for the first roll."
-              : `${opponent === "hotseat" ? `Player ${current.turn + 1}` : current.turn === 0 ? displayName : botNickname} ran out of time.`,
+            current.phase === "setup"
+              ? setupNeedsRoad(current)
+                ? "Waiting for the starting road."
+                : "Waiting for the starting settlement."
+              : current.phase === "discard"
+                ? "Waiting for the required discards."
+                : current.phase === "robber"
+                  ? "Waiting for the robber to move."
+                  : current.progressed !== true &&
+                      current.turn === 0 &&
+                      current.phase === "roll"
+                    ? "Waiting for the first roll."
+                    : `${opponent === "hotseat" ? `Player ${current.turn + 1}` : current.turn === 0 ? displayName : botNickname} ran out of time.`,
           ].slice(-100),
         );
         setGame(next);
@@ -962,34 +1096,37 @@ export default function Forge({
     displayName,
     botNickname,
   ]);
-  const left = Math.min(
-    120,
-    Math.max(0, 120 - Math.floor((clock - game.turnStarted) / 1000)),
-  );
+  const left = turnTimeRemaining(game, clock, pausedAt);
   function choose(
     id: number,
     to?: number,
     trigger?: SVGElement,
     suppressSelectSound = false,
   ) {
-    if (botTurn) return;
+    if (botTurn || opening) return;
     if (game.phase === "setup") {
-      if (to !== undefined || !legalSetupSettlement(game, id)) {
+      const valid = setupNeedsRoad(game)
+        ? to !== undefined && legalSetupRoad(game, id, to)
+        : to === undefined && legalSetupSettlement(game, id);
+      if (!valid) {
         if (sound) soundCue("blocked");
-        setMessage("Choose a highlighted starting corner.");
+        setMessage(
+          setupNeedsRoad(game)
+            ? "Choose a highlighted edge for your starting road."
+            : "Choose a highlighted starting corner.",
+        );
         return;
       }
-      if (sound) soundCue("select");
-      buildTrigger.current = trigger ?? null;
-      setTarget({ at: id });
-      return;
-    }
-    if (game.phase !== "build") {
+    } else if (game.phase !== "build") {
       if (sound) soundCue("error");
       setMessage("Roll before building.");
       return;
     }
-    if (selectedBuilding) {
+    if (
+      selectedBuilding &&
+      (game.phase === "build" ||
+        (game.phase === "setup" && setupNeedsRoad(game)))
+    ) {
       const option = buildAvailability.find(
         (item) => item.building === selectedBuilding,
       )!;
@@ -1007,6 +1144,9 @@ export default function Forge({
         setMessage("Choose a highlighted placement.");
         return;
       }
+      if (selectedBuilding === "road" && to === undefined) return;
+      build(selectedBuilding, id, to);
+      return;
     }
     if (sound && !suppressSelectSound) soundCue("select");
     buildTrigger.current = trigger ?? null;
@@ -1026,9 +1166,13 @@ export default function Forge({
     if (botTurn || (game.phase !== "build" && game.phase !== "setup")) return;
     if (
       game.phase === "setup" &&
-      (building !== "settlement" ||
-        to !== undefined ||
-        !legalSetupSettlement(game, at))
+      (setupNeedsRoad(game)
+        ? building !== "road" ||
+          to === undefined ||
+          !legalSetupRoad(game, at, to)
+        : building !== "settlement" ||
+          to !== undefined ||
+          !legalSetupSettlement(game, at))
     )
       return;
     if (opponent === "online") {
@@ -1054,16 +1198,24 @@ export default function Forge({
         "That build is not legal or you do not have the required resources.",
       );
     } else {
+      showResourceMotion(
+        transfersForAction({
+          type: "build",
+          actor: game.turn,
+          building,
+          setup: game.phase === "setup",
+        }),
+      );
       if (sound) {
         soundCue(building);
       }
       if (game.phase === "setup") {
-        log(
-          `${playerNames[game.turn]} placed a starting settlement at corner ${at + 1}.`,
-        );
+        log(`${playerNames[game.turn]} placed a starting ${building}.`);
         setMessage(
           next.phase === "setup"
-            ? "Choose a starting corner."
+            ? setupNeedsRoad(next)
+              ? "Choose an edge for your starting road."
+              : "Choose a starting corner."
             : "Roll to begin your turn.",
         );
       } else {
@@ -1087,6 +1239,9 @@ export default function Forge({
     const rate = 4;
     const next = transition(game, { type: "bank", give, receive });
     if (next === game) return false;
+    showResourceMotion(
+      transfersForAction({ type: "bank", actor: game.turn, give, receive }),
+    );
     setGame(next);
     setMessage(`Traded ${rate} ${give} for one ${receive}.`);
     log(`${playerNames[game.turn]} traded ${rate} ${give} for 1 ${receive}.`);
@@ -1096,6 +1251,15 @@ export default function Forge({
   function tradeWithPlayer(give: Goods, receive: Goods) {
     const next = transition(game, { type: "playerTrade", give, receive });
     if (next === game) return false;
+    showResourceMotion(
+      transfersForAction({
+        type: "trade",
+        actor: game.turn,
+        other: 1 - game.turn,
+        give,
+        receive,
+      }),
+    );
     setGame(next);
     setMessage(`Traded one ${give} for one ${receive}.`);
     log(
@@ -1105,11 +1269,13 @@ export default function Forge({
     return true;
   }
   function enterGame(resume: boolean) {
+    setPixiReady(false);
     welcomeMusicRef.current?.stop();
     welcomeMusicRef.current = null;
     const now = eventTime();
     if (sound) soundCue("start");
     if (resume) {
+      cancelOpening();
       const resumed = { ...game, turnStarted: now };
       gameRef.current = resumed;
       setGame(resumed);
@@ -1165,6 +1331,7 @@ export default function Forge({
   }
   function finishOnlineExit(findNew: boolean, keepCredentials = false) {
     setOpponentNotice(null);
+    setPeerResumed(false);
     setStartNewOnline(findNew && keepCredentials);
     for (const pending of pendingChats.current.values()) {
       clearTimeout(pending.timer);
@@ -1235,7 +1402,8 @@ export default function Forge({
     startWelcomeOnReturn();
   }
   function rollDice() {
-    if (game.phase !== "roll" || botTurn || pausedAt !== null) return;
+    if (game.phase !== "roll" || botTurn || pausedAt !== null || opening)
+      return;
     if (opponent === "online") {
       onlineCommand({ type: "roll" });
       return;
@@ -1247,15 +1415,41 @@ export default function Forge({
     showRollEffect(first + second);
     if (sound) soundCue("roll");
     log(`${playerNames[game.turn]} rolled ${first + second}.`);
-    if (first + second === 7) {
-      setMessage(
-        "Supply bonus: each player with room receives a least-held resource.",
-      );
-      log("A 7 grants each player with room a least-held resource.");
-    } else setMessage("");
+    setMessage("");
     const next = transition(game, { type: "roll", total: first + second });
     gameRef.current = next;
     setGame(next);
+  }
+  function discardForSeven(resource: Goods) {
+    if (!canDiscard) return;
+    if (opponent === "online") {
+      onlineCommand({ type: "sevenDiscard", resource });
+      return;
+    }
+    const next = transition(game, {
+      type: "sevenDiscard",
+      seat: discardSeat,
+      resource,
+    });
+    if (next === game) return;
+    gameRef.current = next;
+    setGame(next);
+    log(`${playerNames[discardSeat]} discarded a card.`);
+    if (sound) soundCue("discard");
+  }
+  function moveRobber(tile: number) {
+    if (game.phase !== "robber" || botTurn || pausedAt !== null) return;
+    if (opponent === "online") {
+      onlineCommand({ type: "moveRobber", tile });
+      return;
+    }
+    const next = transition(game, { type: "moveRobber", tile });
+    if (next === game) return;
+    gameRef.current = next;
+    setGame(next);
+    setMessage("Robber moved.");
+    log(`${playerNames[game.turn]} moved the robber.`);
+    if (sound) soundCue("select");
   }
   function endTurn() {
     if (game.phase !== "build" || botTurn || pausedAt !== null) return;
@@ -1442,14 +1636,18 @@ export default function Forge({
                 if (window.history.length > 1) window.history.back();
                 else
                   window.location.assign(
-                    standalone ? "about:blank" : hexariHomeHref(),
+                    standalone
+                      ? "about:blank"
+                      : `${hexariHomeHref()}?from=forge`,
                   );
               }}
             >
               Leave game
             </button>
           </div>
-          {!standalone && <a href={hexariHomeHref()}>Back to Hexari</a>}
+          {!standalone && (
+            <a href={`${hexariHomeHref()}?from=forge`}>Back to Hexari</a>
+          )}
         </div>
       </main>
     );
@@ -1486,6 +1684,12 @@ export default function Forge({
           document.body,
         )}
       {confirmation}
+      {resourceMotionOverlay}
+      {peerResumed && started && opponent === "online" && (
+        <div className="forge-peer-resumed" role="status">
+          Your opponent has reconnected and resumed the game.
+        </div>
+      )}
       {opponentNotice &&
         createPortal(
           <ForgeOpponentLeftNotice
@@ -1519,7 +1723,22 @@ export default function Forge({
           game={game}
           bot={opponent === "bot"}
           names={playerNames}
-          onViewBoard={() => setResultDismissed(true)}
+          celebrate={!resultCelebrated}
+          localSeat={opponent === "online" ? online?.seat : undefined}
+          onViewBoard={() => {
+            setResultCelebrated(true);
+            setResultDismissed(true);
+          }}
+          onMainMenu={() => {
+            if (
+              opponent === "online" &&
+              onlineSocket.current?.readyState !== WebSocket.OPEN
+            ) {
+              finishOnlineExit(false);
+              return;
+            }
+            leaveGame();
+          }}
           onPlayAgain={() => {
             if (opponent === "online") {
               requestOnlineExit(true);
@@ -1534,6 +1753,7 @@ export default function Forge({
         <ForgeSettings
           canReloadAfterConfirmation={canReloadAfterConfirmation}
           initialPage={accountCallback || openAccount ? "Account" : undefined}
+          timerRunning={game.phase !== "end" && pausedAt === null}
           sound={sound}
           onSound={toggleSound}
           volume={volume}
@@ -1545,24 +1765,29 @@ export default function Forge({
           onClose={closeSettings}
         />
       )}
-      <button
-        type="button"
-        className="forge-player-profile"
-        aria-label={`${account.signedIn ? "Open account" : "Sign in or create account"}${opponent === "hotseat" ? "" : `, ${playerNames[handPlayer]}`}`}
-        onClick={() => {
-          setOpenAccount(true);
-          setSettingsOpen(true);
-        }}
-      >
-        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <circle cx="12" cy="8" r="3.5" />
-          <path d="M5 20v-1a7 7 0 0 1 14 0v1H5Z" />
-        </svg>
-        <span>
-          {opponent !== "hotseat" && <strong>{playerNames[handPlayer]}</strong>}
-          <small>{account.signedIn ? "Account" : "Sign in"}</small>
-        </span>
-      </button>
+      <div className="forge-profile-controls">
+        <ForgeFullscreen />
+        <button
+          type="button"
+          className="forge-player-profile"
+          aria-label={`${account.signedIn ? "Open account" : "Sign in or create account"}${opponent === "hotseat" ? "" : `, ${playerNames[handPlayer]}`}`}
+          onClick={() => {
+            setOpenAccount(true);
+            setSettingsOpen(true);
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="8" r="3.5" />
+            <path d="M5 20v-1a7 7 0 0 1 14 0v1H5Z" />
+          </svg>
+          <span>
+            {opponent !== "hotseat" && (
+              <strong>{playerNames[handPlayer]}</strong>
+            )}
+            <small>{account.signedIn ? "Account" : "Sign in"}</small>
+          </span>
+        </button>
+      </div>
       <div className="forge-nav">
         <div className="opponent-switch" aria-label="Opponent">
           {opponent !== "online" &&
@@ -1637,21 +1862,7 @@ export default function Forge({
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
-        <div
-          className="forge-game-menu"
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget))
-              setMenuOpen(false);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setMenuOpen(false);
-              event.currentTarget
-                .querySelector<HTMLButtonElement>(".forge-restart")
-                ?.focus();
-            }
-          }}
-        >
+        <div className="forge-game-menu">
           <button
             className="button ghost forge-restart"
             type="button"
@@ -1668,51 +1879,33 @@ export default function Forge({
               strokeWidth="1.8"
               aria-hidden="true"
             >
-              <path d="M9 6h11M9 12h11M9 18h11" strokeLinecap="round" />
-              <circle cx="4.5" cy="6" r="1" />
-              <circle cx="4.5" cy="12" r="1" />
-              <circle cx="4.5" cy="18" r="1" />
+              <path
+                d="M7 8h10a4 4 0 0 1 4 4v3a2 2 0 0 1-3.4 1.4L15 14H9l-2.6 2.4A2 2 0 0 1 3 15v-3a4 4 0 0 1 4-4Z"
+                strokeLinejoin="round"
+              />
+              <path d="M7 11v4m-2-2h4m6-1h.01m3 2h.01" strokeLinecap="round" />
             </svg>
           </button>
-          {menuOpen && (
-            <div
-              id="forge-game-menu"
-              className="forge-game-menu-panel"
-              aria-label="Game options"
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  setPendingConfirmation("restart");
-                }}
-              >
-                New game
-              </button>
-              <button
-                type="button"
-                disabled={game.phase === "end"}
-                onClick={() => {
-                  setMenuOpen(false);
-                  pauseGame();
-                }}
-              >
-                Pause game
-              </button>
-              <button
-                type="button"
-                className="forge-leave-game"
-                onClick={() => {
-                  setMenuOpen(false);
-                  leaveGame();
-                }}
-              >
-                Leave game
-              </button>
-            </div>
-          )}
         </div>
       </div>
+      {menuOpen && (
+        <ForgeGameMenu
+          finished={game.phase === "end"}
+          onClose={() => setMenuOpen(false)}
+          onNewGame={() => {
+            setMenuOpen(false);
+            setPendingConfirmation("restart");
+          }}
+          onPause={() => {
+            setMenuOpen(false);
+            pauseGame();
+          }}
+          onLeave={() => {
+            setMenuOpen(false);
+            leaveGame();
+          }}
+        />
+      )}
       <div className="forge-layout">
         <div className="forge-board-area">
           <h1 className="sr-only">Forge</h1>
@@ -1728,7 +1921,7 @@ export default function Forge({
               />
               <svg
                 ref={boardSvgRef}
-                viewBox="-80 -80 640 530"
+                viewBox="5 -10 470 390"
                 role="group"
                 aria-label="Forge game board"
               >
@@ -1818,13 +2011,15 @@ export default function Forge({
                       />
                       <g
                         className="forge-terrain-art"
-                        transform={`translate(${240 + c.x * 45} ${185 + c.y * 45 - 14})`}
+                        transform={`translate(${240 + c.x * 45} ${185 + c.y * 45 - 12}) scale(0.9)`}
                         aria-label={`${t.resource} terrain`}
                       >
                         <TerrainArt resource={t.resource} />
                       </g>
                       {t.number && (
-                        <>
+                        <g
+                          transform={`translate(${240 + c.x * 45} ${197 + c.y * 45}) scale(0.9) translate(${-240 - c.x * 45} ${-197 - c.y * 45})`}
+                        >
                           <circle
                             cx={240 + c.x * 45}
                             cy={185 + c.y * 45 + 14}
@@ -1856,7 +2051,65 @@ export default function Forge({
                           >
                             {t.number}
                           </text>
-                        </>
+                        </g>
+                      )}
+                      {i === robberTile && (
+                        <g
+                          transform={`translate(${240 + c.x * 45 + 20} ${185 + c.y * 45 - 3}) scale(0.9)`}
+                          aria-label="Robber"
+                          pointerEvents="none"
+                        >
+                          <ellipse
+                            cy="11"
+                            rx="9"
+                            ry="3"
+                            fill="#152b2d"
+                            opacity=".35"
+                          />
+                          <path
+                            d="M-7 10v-2c0-1.4 1-2.5 2.6-2.8L-2-2h4l2.4 7.2C6 5.5 7 6.6 7 8v2Z"
+                            fill="#304640"
+                            stroke="#e7d7ad"
+                            strokeWidth="1.5"
+                            strokeLinejoin="round"
+                          />
+                          <path
+                            d="M-4.4 5.2h8.8M-7 8.4H7"
+                            fill="none"
+                            stroke="#91aa9c"
+                            strokeWidth="1.2"
+                          />
+                          <circle
+                            cy="-5"
+                            r="4.5"
+                            fill="#415b51"
+                            stroke="#e7d7ad"
+                            strokeWidth="1.5"
+                          />
+                          <path
+                            d="M-2.5-6.4a2.6 2.6 0 0 1 2-1.2"
+                            fill="none"
+                            stroke="#c1d1bf"
+                            strokeLinecap="round"
+                            strokeWidth="1"
+                          />
+                        </g>
+                      )}
+                      {canMoveRobber && i !== robberOrigin && (
+                        <polygon
+                          points={pts}
+                          className="forge-robber-target"
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Move robber to ${t.resource} tile ${i + 1}`}
+                          onClick={() => moveRobber(i)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              moveRobber(i);
+                            }
+                          }}
+                        />
                       )}
                     </g>
                   );
@@ -1900,18 +2153,32 @@ export default function Forge({
                     </g>
                   )),
                 )}
-                {game.phase === "build" &&
+                {(game.phase === "build" ||
+                  (game.phase === "setup" && setupNeedsRoad(game))) &&
                   !botTurn &&
                   (!selectedBuilding || selectedBuilding === "road") &&
                   buildAvailability.find((item) => item.building === "road")
                     ?.available &&
                   vertices.flatMap((v) =>
                     v.neighbors
-                      .filter((id) => id > v.id && legalRoad(game, v.id, id))
+                      .filter(
+                        (id) =>
+                          id > v.id &&
+                          (game.phase === "setup"
+                            ? legalSetupRoad(game, v.id, id)
+                            : legalRoad(game, v.id, id)),
+                      )
                       .map((id) => {
                         const other = vertices[id];
                         return (
                           <g key={`option-${v.id}-${id}`}>
+                            <circle
+                              className="forge-placement-halo"
+                              cx={240 + ((v.x + other.x) / 2) * 45}
+                              cy={185 + ((v.y + other.y) / 2) * 45}
+                              r="9"
+                              pointerEvents="none"
+                            />
                             <line
                               className="forge-road-option"
                               pointerEvents="none"
@@ -1950,14 +2217,29 @@ export default function Forge({
                   );
                   const city =
                     owner >= 0 && game.players[owner].cities.includes(v.id);
+                  const openingPiece =
+                    owner >= 0 &&
+                    !city &&
+                    opening?.keys.has(`settlement:${owner}:${v.id}`);
+                  const openingHidden =
+                    openingPiece && opening?.phase === "waiting";
+                  const openingLanding =
+                    openingPiece && opening?.phase === "landing";
                   const selectCorner = (trigger: SVGElement) => {
+                    if (opening) return;
                     if (owner < 0) {
                       choose(v.id, undefined, trigger);
                       return;
                     }
                     if (sound)
                       soundCue(city ? "citySelect" : "settlementSelect");
-                    if (botTurn || game.phase !== "build") return;
+                    if (botTurn || owner !== game.turn) return;
+                    if (game.phase === "roll") {
+                      buildTrigger.current = trigger;
+                      setTarget({ at: v.id });
+                      return;
+                    }
+                    if (game.phase !== "build") return;
                     if (selectedBuilding) {
                       const option = buildAvailability.find(
                         (item) => item.building === selectedBuilding,
@@ -1982,26 +2264,33 @@ export default function Forge({
                             option.available &&
                             (!selectedBuilding ||
                               selectedBuilding === option.building) &&
-                            (option.corners.includes(v.id) ||
-                              (option.building === "road" &&
-                                option.edges.some(
-                                  ([a, b]) => a === v.id || b === v.id,
-                                ))),
+                            option.corners.includes(v.id),
                         ));
                   return (
                     <g key={v.id}>
+                      {available && (
+                        <circle
+                          className="forge-placement-halo"
+                          cx={240 + v.x * 45}
+                          cy={185 + v.y * 45}
+                          r="9"
+                          pointerEvents="none"
+                        />
+                      )}
                       <circle
                         cx={240 + v.x * 45}
                         cy={185 + v.y * 45}
-                        r={owner >= 0 ? (city ? 9 : 7) : 5}
+                        r={owner >= 0 && !openingHidden ? (city ? 9 : 7) : 5}
                         fill={
-                          owner === 0
-                            ? "#f1c36b"
-                            : owner === 1
-                              ? "#80b9d4"
-                              : available
-                                ? "#e6eee0"
-                                : "#50605b"
+                          openingHidden
+                            ? "#50605b"
+                            : owner === 0
+                              ? "#f1c36b"
+                              : owner === 1
+                                ? "#80b9d4"
+                                : available
+                                  ? "#e6eee0"
+                                  : "#50605b"
                         }
                         stroke={
                           target?.at === v.id
@@ -2013,7 +2302,7 @@ export default function Forge({
                         strokeWidth={available ? "3" : "2"}
                         role="button"
                         tabIndex={0}
-                        aria-label={`Corner ${v.id + 1}${owner >= 0 ? `, player ${owner + 1} ${city ? "city" : "settlement"}` : game.phase === "setup" && available ? ", available starting location" : ""}`}
+                        aria-label={`Corner ${v.id + 1}${owner >= 0 && !openingHidden ? `, player ${owner + 1} ${city ? "city" : "settlement"}` : game.phase === "setup" && available ? ", available starting location" : ""}`}
                         onClick={(event) => selectCorner(event.currentTarget)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
@@ -2022,25 +2311,27 @@ export default function Forge({
                           }
                         }}
                       />
-                      {owner >= 0 && (
+                      {owner >= 0 && !openingHidden && (
                         <g
                           pointerEvents="none"
                           transform={`translate(${240 + v.x * 45} ${185 + v.y * 45}) scale(1.3)`}
                         >
                           <g
                             className={
-                              animatedPlacements.has(
-                                `${city ? "city" : "settlement"}:${owner}:${v.id}`,
-                              )
-                                ? `forge-piece-landing forge-${city ? "city" : "settlement"}-landing`
-                                : undefined
+                              openingLanding
+                                ? "forge-opening-landing"
+                                : animatedPlacements.has(
+                                      `${city ? "city" : "settlement"}:${owner}:${v.id}`,
+                                    )
+                                  ? `forge-piece-landing forge-${city ? "city" : "settlement"}-landing`
+                                  : undefined
                             }
                           >
                             <BuildingArt city={city} owner={owner} />
                           </g>
                         </g>
                       )}
-                      {owner >= 0 && (
+                      {owner >= 0 && !openingHidden && (
                         <ellipse
                           cx={240 + v.x * 45}
                           cy={182 + v.y * 45}
@@ -2062,7 +2353,9 @@ export default function Forge({
                 })}
               </svg>
               {target &&
-                (game.phase === "build" || game.phase === "setup") &&
+                (game.phase === "roll" ||
+                  game.phase === "build" ||
+                  game.phase === "setup") &&
                 !botTurn && (
                   <ForgeBuildPopover
                     game={game}
@@ -2094,13 +2387,23 @@ export default function Forge({
             <p>
               {game.phase === "setup"
                 ? botTurn
-                  ? "Waiting for the other player to choose a starting corner."
-                  : "Choose a highlighted corner for your first settlement."
+                  ? "Waiting for the other player's starting placement."
+                  : setupNeedsRoad(game)
+                    ? "Choose a highlighted edge for your starting road."
+                    : "Choose a highlighted corner for your first settlement."
                 : game.phase === "roll"
                   ? "Roll to begin your turn."
-                  : game.phase === "build"
-                    ? "Build, trade, or end your turn."
-                    : "Start a new game to play again."}
+                  : game.phase === "discard"
+                    ? canDiscard
+                      ? `${playerNames[discardSeat]}: discard ${game.discardRemaining?.[discardSeat]} card${game.discardRemaining?.[discardSeat] === 1 ? "" : "s"}.`
+                      : "Waiting for the required discards."
+                    : game.phase === "robber"
+                      ? canMoveRobber
+                        ? "Choose a different hex for the robber."
+                        : "Waiting for the other player to move the robber."
+                      : game.phase === "build"
+                        ? "Build, trade, or end your turn."
+                        : "Start a new game to play again."}
             </p>
             {game.phase === "end" && resultDismissed && (
               <button
@@ -2113,7 +2416,7 @@ export default function Forge({
             )}
             <div className="scoreboard">
               {game.players.map((_, i) => (
-                <div key={i}>
+                <div key={i} data-forge-seat={i}>
                   <ForgeScoreName name={playerNames[i]} />
                   <small className="forge-score-status">
                     {[
@@ -2135,33 +2438,22 @@ export default function Forge({
             </div>
             {game.phase !== "end" && (
               <>
-                <fieldset className="forge-action-group" disabled={botTurn}>
-                  <div className="field-label">BUILD</div>
-                  <p role="status" className="hint">
-                    {message}
-                  </p>
-                  <p className="hint">
-                    {game.phase === "setup"
-                      ? "Place your first settlement for free."
-                      : "Select an edge or corner to build. A build ends your turn."}
-                  </p>
-                  {game.phase === "build" &&
-                    !botTurn &&
-                    !buildAvailability.some((option) => option.available) && (
-                      <p className="hint" role="status">
-                        No build available yet. Trade or end your turn to
-                        collect more resources.
-                      </p>
-                    )}
+                {game.phase === "discard" && canDiscard && (
                   <section
                     className="forge-discard-card"
-                    aria-labelledby="forge-discard-heading"
+                    aria-labelledby="forge-seven-discard-heading"
                   >
-                    <h3 id="forge-discard-heading">Discard a card</h3>
+                    <h3 id="forge-seven-discard-heading">
+                      Choose cards to discard
+                    </h3>
+                    <p className="hint" role="status">
+                      {playerNames[discardSeat]}:{" "}
+                      {game.discardRemaining?.[discardSeat]} remaining
+                    </p>
                     <div
                       className="forge-discard-options"
                       role="group"
-                      aria-label="Discard one resource"
+                      aria-label="Required discards"
                     >
                       {goods.map((resource) => (
                         <button
@@ -2169,41 +2461,101 @@ export default function Forge({
                           type="button"
                           className={`forge-bank-card forge-bank-${resource}`}
                           disabled={
-                            game.phase !== "build" ||
-                            game.players[game.turn].hand[resource] < 1
+                            game.players[discardSeat].hand[resource] < 1 ||
+                            pausedAt !== null
                           }
                           aria-label={`Discard one ${resource}`}
-                          title={`Discard one ${resource}`}
-                          onClick={() => {
-                            if (opponent === "online") {
-                              onlineCommand({ type: "discard", resource });
-                              return;
-                            }
-                            const next = transition(game, {
-                              type: "discard",
-                              resource,
-                            });
-                            if (next !== game) {
-                              setGame(next);
-                              setMessage(`Discarded one ${resource}.`);
-                              log(
-                                `${playerNames[game.turn]} discarded one ${resource}.`,
-                              );
-                              if (sound) soundCue("discard");
-                            }
-                          }}
+                          onClick={() => discardForSeven(resource)}
                         >
                           <svg viewBox="-20 -20 40 40" aria-hidden="true">
                             <TerrainArt resource={resource} />
                           </svg>
                           <span className="forge-bank-count" aria-hidden="true">
-                            −1
+                            -1
                           </span>
                         </button>
                       ))}
                     </div>
                   </section>
-                </fieldset>
+                )}
+                {(game.phase === "setup" ||
+                  game.phase === "roll" ||
+                  game.phase === "build") && (
+                  <fieldset className="forge-action-group" disabled={botTurn}>
+                    <div className="field-label">BUILD</div>
+                    <p role="status" className="hint">
+                      {message}
+                    </p>
+                    <p className="hint">
+                      {game.phase === "setup"
+                        ? setupNeedsRoad(game)
+                          ? "Place your starting road beside your settlement."
+                          : "Choose a corner, then confirm your settlement."
+                        : "Select an edge or corner to build. A build ends your turn."}
+                    </p>
+                    {game.phase === "build" &&
+                      !botTurn &&
+                      !buildAvailability.some((option) => option.available) && (
+                        <p className="hint" role="status">
+                          No build available yet. Trade or end your turn to
+                          collect more resources.
+                        </p>
+                      )}
+                    <section
+                      className="forge-discard-card"
+                      aria-labelledby="forge-discard-heading"
+                    >
+                      <h3 id="forge-discard-heading">Discard a card</h3>
+                      <div
+                        className="forge-discard-options"
+                        role="group"
+                        aria-label="Discard one resource"
+                      >
+                        {goods.map((resource) => (
+                          <button
+                            key={resource}
+                            type="button"
+                            className={`forge-bank-card forge-bank-${resource}`}
+                            disabled={
+                              game.phase !== "build" ||
+                              game.players[game.turn].hand[resource] < 1
+                            }
+                            aria-label={`Discard one ${resource}`}
+                            title={`Discard one ${resource}`}
+                            onClick={() => {
+                              if (opponent === "online") {
+                                onlineCommand({ type: "discard", resource });
+                                return;
+                              }
+                              const next = transition(game, {
+                                type: "discard",
+                                resource,
+                              });
+                              if (next !== game) {
+                                setGame(next);
+                                setMessage(`Discarded one ${resource}.`);
+                                log(
+                                  `${playerNames[game.turn]} discarded one ${resource}.`,
+                                );
+                                if (sound) soundCue("discard");
+                              }
+                            }}
+                          >
+                            <svg viewBox="-20 -20 40 40" aria-hidden="true">
+                              <TerrainArt resource={resource} />
+                            </svg>
+                            <span
+                              className="forge-bank-count"
+                              aria-hidden="true"
+                            >
+                              −1
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  </fieldset>
+                )}
                 {opponent === "online" && online?.recoverable && (
                   <button
                     type="button"
@@ -2291,13 +2643,15 @@ export default function Forge({
               <button
                 type="button"
                 className="dice-roll-control"
-                disabled={game.phase !== "roll"}
+                disabled={game.phase !== "roll" || opening !== null}
                 aria-label={
-                  game.phase === "setup"
-                    ? "Place a starting settlement first"
-                    : game.phase === "roll"
-                      ? "Roll dice"
-                      : `Dice rolled ${game.dice ?? ""}`
+                  opening
+                    ? "Placing starting settlements"
+                    : game.phase === "setup"
+                      ? "Complete your starting placements first"
+                      : game.phase === "roll"
+                        ? "Roll dice"
+                        : `Dice rolled ${game.dice ?? ""}`
                 }
                 onClick={rollDice}
               >
@@ -2314,15 +2668,23 @@ export default function Forge({
                 </span>
                 <span className="dice-roll-hint">
                   {game.phase === "setup"
-                    ? "Place your settlement"
-                    : game.phase === "roll"
+                    ? setupNeedsRoad(game)
+                      ? "Place your road"
+                      : "Place your settlement"
+                    : game.phase === "roll" &&
+                        !botTurn &&
+                        !opening &&
+                        pausedAt === null
                       ? "Tap the dice to roll"
-                      : `Rolled ${game.dice}`}
+                      : game.phase === "build"
+                        ? `Rolled ${game.dice}`
+                        : null}
                 </span>
               </button>
               <ForgeBuildCards
                 game={game}
                 botTurn={botTurn}
+                playerSeat={handPlayer}
                 selected={selectedBuilding}
                 onSelect={(building) => {
                   setBuildSelection(
@@ -2354,9 +2716,7 @@ export default function Forge({
               </button>
             </div>
             <div className="forge-hand-cards">
-              <span className="forge-hand-label">
-                Your hand <small>MAX 7</small>
-              </span>
+              <span className="forge-hand-label">Your hand</span>
               <div className="hand">
                 {goods.map((g) => (
                   <div key={g}>
