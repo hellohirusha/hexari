@@ -11,7 +11,8 @@ import { env } from "node:process";
 import { URL } from "node:url";
 import { setInterval } from "node:timers";
 import { WebSocketServer, WebSocket } from "ws";
-import { newGame } from "../src/forge/engine.ts";
+import { boardVersion, newGame } from "../src/forge/engine.ts";
+import { migrateOpeningGame } from "../src/forge/openingMigration.ts";
 import {
   isGeneratedNickname,
   nicknameFromSeed,
@@ -206,7 +207,7 @@ function send(socket, payload) {
   if (socket?.readyState === WebSocket.OPEN)
     socket.send(JSON.stringify(payload));
 }
-function publish(room, dice, activity, snapshot = room.session) {
+function publish(room, dice, activity, snapshot = room.session, publicAction) {
   room.players.forEach((socket, seat) => {
     const game = structuredClone(snapshot.game);
     game.players[1 - seat].hand = {
@@ -222,6 +223,7 @@ function publish(room, dice, activity, snapshot = room.session) {
       session: { ...snapshot, game },
       dice,
       activity,
+      publicAction,
     });
   });
 }
@@ -244,7 +246,7 @@ function newRoom() {
     tokenHashes: tokens.map(tokenHash),
     users: [null, null],
     session: {
-      game: newGame(Date.now()),
+      game: newGame(Date.now(), { manualSetup: true }),
       revision: 0,
       offer: null,
       names: [randomNickname(), randomNickname()],
@@ -305,6 +307,7 @@ async function loadRoom(id) {
               typeof value === "string" && /^[a-f0-9]{64}$/.test(value),
           ) ||
           !row.session?.game ||
+          row.session.game.boardVersion !== boardVersion ||
           !Array.isArray(row.session.game.players) ||
           row.session.game.players.length !== 2 ||
           !Number.isSafeInteger(row.session.revision) ||
@@ -320,7 +323,10 @@ async function loadRoom(id) {
             row.player_one ? { id: row.player_one } : null,
             row.player_two ? { id: row.player_two } : null,
           ],
-          session: row.session,
+          session: {
+            ...row.session,
+            game: migrateOpeningGame(row.session.game),
+          },
           created: row.created_at,
           chat: row.chat.slice(-100),
           started: true,
@@ -632,6 +638,7 @@ sockets.on("connection", (socket) => {
       }
       matched.started = true;
       matched.session.game.turnStarted = Date.now();
+      matched.session.game.gameStartedAt = matched.session.game.turnStarted;
       credentials(matched, 0);
       credentials(matched, 1);
       persistThen(matched, (snapshot) =>
@@ -702,7 +709,7 @@ sockets.on("connection", (socket) => {
         found.suspendedAt = null;
         found.reconnectDeadline = null;
         for (const player of found.players)
-          send(player, { type: "peer-reconnected" });
+          send(player, { type: "peer-reconnected", seat: claimedSeat });
         persistThen(found, (snapshot) => {
           publish(found, undefined, undefined, snapshot);
           for (const entry of found.chat)
@@ -761,6 +768,7 @@ sockets.on("connection", (socket) => {
       }
       room.started = true;
       room.session.game.turnStarted = Date.now();
+      room.session.game.gameStartedAt = room.session.game.turnStarted;
       credentials(room, 1);
       persistThen(room, (snapshot) =>
         publish(room, undefined, undefined, snapshot),
@@ -800,7 +808,11 @@ sockets.on("connection", (socket) => {
             reason: "This seat is already associated with another account.",
           });
         const existing = await storage.findByUser(user.id, now);
-        if (existing && existing.id !== room.id)
+        if (
+          existing &&
+          existing.id !== room.id &&
+          existing.session?.game?.boardVersion === boardVersion
+        )
           return send(socket, {
             type: "error",
             reason: "This account already has another active game.",
@@ -978,6 +990,7 @@ sockets.on("connection", (socket) => {
       }
       return;
     }
+    const previousSession = room.session;
     const result = applyOnlineCommand(
       room.session,
       seat,
@@ -985,6 +998,7 @@ sockets.on("connection", (socket) => {
       message.command,
       Date.now(),
       () => [randomInt(1, 7), randomInt(1, 7)],
+      () => randomInt(0, 0x100000000) / 0x100000000,
     );
     if (!result.ok)
       return send(socket, { type: "error", reason: result.reason });
@@ -992,18 +1006,50 @@ sockets.on("connection", (socket) => {
     ensureRoomNames(room);
     const player = room.session.names[seat];
     const action = message.command;
+    const publicAction =
+      action.type === "build"
+        ? {
+            type: "build",
+            actor: seat,
+            building: action.building,
+            setup: previousSession.game.phase === "setup",
+          }
+        : action.type === "bank"
+          ? {
+              type: "bank",
+              actor: seat,
+              give: action.give,
+              receive: action.receive,
+            }
+          : action.type === "accept" && previousSession.offer
+            ? {
+                type: "trade",
+                actor: previousSession.offer.by,
+                other: seat,
+                give: previousSession.offer.give,
+                receive: previousSession.offer.receive,
+              }
+            : undefined;
     const descriptions = {
-      roll: `${player} rolled ${result.dice?.reduce((total, value) => total + value, 0)}.${result.dice?.[0] + result.dice?.[1] === 7 ? " Supply bonus: each player with room receives a least-held resource." : ""}`,
+      roll: `${player} rolled ${result.dice?.reduce((total, value) => total + value, 0)}.`,
       endTurn: `${player} ended their turn.`,
       build: `${player} built a ${action.building}.`,
       bank: `${player} traded with the bank.`,
       discard: `${player} discarded a card.`,
+      sevenDiscard: `${player} discarded a card.`,
+      moveRobber: `${player} moved the robber.`,
       offer: `${player} offered a trade.`,
       accept: `${player} accepted the trade.`,
       decline: `${player} declined the trade.`,
     };
     persistThen(room, (snapshot) =>
-      publish(room, result.dice, descriptions[action.type], snapshot),
+      publish(
+        room,
+        result.dice,
+        descriptions[action.type],
+        snapshot,
+        publicAction,
+      ),
     );
   });
   socket.on("close", () => {
