@@ -1,5 +1,6 @@
-import { newGame, goods, type Game } from "./engine";
-import { vertices } from "./board";
+import { newGame, goods, boardVersion, type Game } from "./engine";
+import { defaultBoard, vertices } from "./board";
+import { migrateOpeningGame } from "./openingMigration";
 
 const validCorner = (value: unknown): value is number =>
   typeof value === "number" &&
@@ -12,10 +13,13 @@ export function parseResumableGame(raw: string | null): Game | null {
   try {
     const value: unknown = JSON.parse(raw);
     if (!value || typeof value !== "object") return null;
-    const game = value as Game;
+    let game = value as Game;
     if (
+      game.boardVersion !== boardVersion ||
       (game.phase !== "setup" &&
         game.phase !== "roll" &&
+        game.phase !== "discard" &&
+        game.phase !== "robber" &&
         game.phase !== "build") ||
       (game.turn !== 0 && game.turn !== 1) ||
       game.winner !== null ||
@@ -50,8 +54,6 @@ export function parseResumableGame(raw: string | null): Game | null {
         )
       )
         return null;
-      if (goods.reduce((sum, resource) => sum + player.hand[resource], 0) > 7)
-        return null;
       const buildings = [...player.settlements, ...player.cities];
       const improvements = [...(player.markets ?? []), ...(player.farms ?? [])];
       if (
@@ -62,18 +64,58 @@ export function parseResumableGame(raw: string | null): Game | null {
         return null;
     }
     if (
-      game.phase === "setup" &&
-      (game.players[0].settlements.length !== (game.turn === 1 ? 1 : 0) ||
-        game.players[1].settlements.length !== 0 ||
+      game.robberTile !== undefined &&
+      (!Number.isInteger(game.robberTile) ||
+        game.robberTile < 0 ||
+        game.robberTile >= defaultBoard.length)
+    )
+      return null;
+    if (game.phase === "discard" || game.phase === "robber") {
+      const remaining = game.discardRemaining;
+      if (
+        game.dice !== 7 ||
+        !Array.isArray(remaining) ||
+        remaining.length !== 2 ||
+        remaining.some(
+          (count, seat) =>
+            !Number.isSafeInteger(count) ||
+            count < 0 ||
+            count >
+              goods.reduce(
+                (sum, resource) => sum + game.players[seat].hand[resource],
+                0,
+              ),
+        ) ||
+        (game.phase === "discard"
+          ? remaining.every((count) => count === 0)
+          : remaining.some((count) => count !== 0))
+      )
+        return null;
+    }
+    if (game.phase === "setup") {
+      game = migrateOpeningGame(game);
+      const [first, second] = game.players;
+      if (
         game.players.some(
           (player) =>
             player.cities.length ||
-            player.roads.length ||
             player.farms?.length ||
             player.markets?.length,
-        ))
-    )
-      return null;
+        ) ||
+        (game.turn === 0 &&
+          (first.settlements.length > 1 ||
+            first.roads.length !== 0 ||
+            second.settlements.length !== 0 ||
+            second.roads.length !== 0)) ||
+        (game.turn === 1 &&
+          (first.settlements.length !== 1 ||
+            first.roads.length !== 1 ||
+            !first.roads[0].includes(first.settlements[0]) ||
+            second.settlements.length > 1 ||
+            second.roads.length !== 0))
+      )
+        return null;
+    }
     const occupied = game.players.flatMap((player) => [
       ...player.settlements,
       ...player.cities,
@@ -102,11 +144,13 @@ export function parseResumableGame(raw: string | null): Game | null {
       game.phase === "roll" &&
       game.turn === 0 &&
       game.dice === null &&
-      [initial.players.map((p) => p.settlements[0]), [8, 41]].some((corners) =>
-        game.players.every(
-          (player, index) => player.settlements[0] === corners[index],
-        ),
-      ) &&
+      (game.progressed === false ||
+        [initial.players.map((p) => p.settlements[0]), [8, 41]].some(
+          (corners) =>
+            game.players.every(
+              (player, index) => player.settlements[0] === corners[index],
+            ),
+        )) &&
       game.players.every((player, index) => {
         const start = initial.players[index];
         return (
