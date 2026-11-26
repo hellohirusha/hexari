@@ -12,7 +12,9 @@ export default function ForgeScoreName({ name }: { name: string }) {
     if (!card || !text) return;
 
     const update = () => {
-      const width = text.getBoundingClientRect().width;
+      // The table is scaled on smaller screens. Compare untransformed layout
+      // widths so the fit does not mistake the scaled text for a shorter name.
+      const width = text.offsetWidth;
       if (width > 0 && card.clientWidth > 0) {
         setScale(Math.min(1, card.clientWidth / width));
       }
