@@ -21,6 +21,7 @@ import {
   type Tile,
 } from "../shared/board";
 import { emptyHand, goods, type Goods } from "../shared/resources";
+import "./liveTracker.css";
 
 const key = "hexari-live-session-v2";
 const defaultPlayers = (): TrackedPlayer[] =>
@@ -202,8 +203,8 @@ export default function LiveTracker({
       <>
         <h2>Start a game log</h2>
         <p>Enter starting hands and settlement corners.</p>
-        <label>
-          Turn of the first roll to log
+        <label className="tracker-first-roll">
+          <span>Turn of the first roll to log</span>
           <input
             type="number"
             min="1"
