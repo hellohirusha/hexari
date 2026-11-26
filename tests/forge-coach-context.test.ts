@@ -44,13 +44,16 @@ describe("Forge coach context", () => {
       "roll before building or trading",
     );
     expect(forgeCoachState(beforeRoll, "Build").buildings).toContain(
-      "current hand 5 cards, 2 spaces free",
+      "Current hand: 0 cards",
     );
     beforeRoll.players[0].hand.ore = 3;
     expect(forgeCoachState(beforeRoll, "Build").buildings).toContain(
-      "current hand 7 cards, 0 spaces free",
+      "Current hand: 3 cards",
     );
-    const game = transition(beforeRoll, { type: "roll", total: 7 });
+    const game = transition(beforeRoll, { type: "roll", total: 6 });
+    game.players[0].hand.wood = 1;
+    game.players[0].hand.brick = 1;
+    game.players[0].hand.wheat = 0;
     const roads = buildOptions(game, "road");
     const context = forgeCoachState(game, "Build").buildings;
     expect(context).toContain("dice have been rolled");
