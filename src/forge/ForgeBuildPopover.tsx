@@ -8,6 +8,8 @@ import {
   legalRoad,
   legalSettlement,
   legalSetupSettlement,
+  legalSetupRoad,
+  remainingPieces,
   costs,
   type Building,
   type Game,
@@ -23,15 +25,6 @@ type Choice = {
   cost: Partial<Record<Goods, number>>;
   label: string;
 };
-
-/** A small board-oriented cue distinguishes roads offered from one corner. */
-function roadDirection(from: number, to: number): string {
-  const a = vertices[from];
-  const b = vertices[to];
-  const angle = Math.atan2(b.y - a.y, b.x - a.x);
-  const directions = ["→", "↘", "↓", "↙", "←", "↖", "↑", "↗"];
-  return directions[(Math.round(angle / (Math.PI / 4)) + 8) % 8];
-}
 
 export default function ForgeBuildPopover({
   game,
@@ -52,12 +45,26 @@ export default function ForgeBuildPopover({
   const x = other ? (v.x + other.x) / 2 : v.x;
   const y = other ? (v.y + other.y) / 2 : v.y;
   const choices: Choice[] = [];
+  const player = game.players[game.turn];
+  const previewOwnBuilding =
+    game.phase === "roll" &&
+    !other &&
+    (player.settlements.includes(v.id) || player.cities.includes(v.id));
+  const showBuildingChoices = game.phase === "build" || previewOwnBuilding;
   if (game.phase === "setup" && !other && legalSetupSettlement(game, v.id))
     choices.push({
       building: "settlement",
       at: v.id,
       cost: {},
       label: "Starting settlement",
+    });
+  if (game.phase === "setup" && other && legalSetupRoad(game, v.id, other.id))
+    choices.push({
+      building: "road",
+      at: v.id,
+      to: other.id,
+      cost: {},
+      label: "Starting road",
     });
   if (game.phase === "build" && other && legalRoad(game, v.id, other.id))
     choices.push({
@@ -75,9 +82,10 @@ export default function ForgeBuildPopover({
       label: "Settlement",
     });
   if (
-    game.phase === "build" &&
+    showBuildingChoices &&
     !other &&
-    game.players[game.turn].settlements.includes(v.id)
+    player.settlements.includes(v.id) &&
+    remainingPieces(player, "city") > 0
   )
     choices.push({
       building: "city",
@@ -85,18 +93,6 @@ export default function ForgeBuildPopover({
       cost: costs.city,
       label: "City",
     });
-  if (game.phase === "build" && !other)
-    v.neighbors
-      .filter((id) => legalRoad(game, v.id, id))
-      .forEach((id) =>
-        choices.push({
-          building: "road",
-          at: v.id,
-          to: id,
-          cost: costs.road,
-          label: `Road to ${id + 1}`,
-        }),
-      );
   const visibleChoices = choices.filter(
     (choice) => !selectedBuilding || choice.building === selectedBuilding,
   );
@@ -116,8 +112,8 @@ export default function ForgeBuildPopover({
         { width, height },
         { width: popup.offsetWidth, height: popup.offsetHeight },
         {
-          x: (0.5 + (x * 45 * scale) / 640) * width,
-          y: (0.5 + (y * 45 * scale) / 530) * height,
+          x: (0.5 + (x * 45 * scale) / 470) * width,
+          y: (0.5 + (y * 45 * scale) / 390) * height,
         },
       );
       popup.style.left = `${position.left}px`;
@@ -172,28 +168,26 @@ export default function ForgeBuildPopover({
         </span>
       )}
       {visibleChoices.map((choice) => {
-        const affordable = canAfford(game.players[game.turn].hand, choice.cost);
-        const costLabel =
-          Object.entries(choice.cost)
-            .map(([resource, amount]) => `${amount} ${resource}`)
-            .join(", ") || "free";
+        const affordable = canAfford(player.hand, choice.cost);
+        const rollFirst = game.phase === "roll";
+        const unavailable = rollFirst
+          ? "roll first"
+          : affordable
+            ? ""
+            : "not enough resources";
+        const costLabel = Object.entries(choice.cost)
+          .map(([resource, amount]) => `${amount} ${resource}`)
+          .join(", ");
         return (
           <button
             key={`${choice.building}-${choice.to ?? choice.at}`}
             type="button"
             className="forge-context-choice"
-            aria-label={`${choice.label}, ${costLabel}${affordable ? "" : ", not enough resources"}`}
-            title={`${choice.label}: ${costLabel}${affordable ? "" : " - not enough resources"}`}
-            disabled={!affordable}
+            aria-label={`${choice.label}${costLabel ? `, ${costLabel}` : ""}${unavailable ? `, ${unavailable}` : ""}`}
+            title={`${choice.label}${costLabel ? `: ${costLabel}` : ""}${unavailable ? ` - ${unavailable}` : ""}`}
+            disabled={!affordable || rollFirst}
             onClick={() => onBuild(choice.building, choice.at, choice.to)}
           >
-            {choice.building === "road" &&
-              choice.to !== undefined &&
-              !other && (
-                <span className="forge-road-direction" aria-hidden="true">
-                  {roadDirection(choice.at, choice.to)}
-                </span>
-              )}
             <svg
               className="forge-context-illustration"
               viewBox="-16 -16 32 32"
@@ -234,11 +228,9 @@ export default function ForgeBuildPopover({
                 />
               )}
             </svg>
-            <span className="forge-context-cost" aria-hidden="true">
-              {Object.entries(choice.cost).length === 0 ? (
-                <span>Free</span>
-              ) : (
-                Object.entries(choice.cost).map(([resource, amount]) => (
+            {Object.entries(choice.cost).length > 0 && (
+              <span className="forge-context-cost" aria-hidden="true">
+                {Object.entries(choice.cost).map(([resource, amount]) => (
                   <span
                     key={resource}
                     className={
@@ -252,9 +244,9 @@ export default function ForgeBuildPopover({
                     </svg>
                     <span>{amount}</span>
                   </span>
-                ))
-              )}
-            </span>
+                ))}
+              </span>
+            )}
           </button>
         );
       })}
