@@ -41,7 +41,7 @@ The combined local app serves the same surfaces at `/`, `/tools`, and `/forge`. 
 
 A promising intersection can have strong production yet leave a player short of a needed resource or too far from a useful port. Comparing those trade-offs by eye becomes harder once dice rolls, builds, and trades change the position. Hexari puts the board and those decisions in one workspace, with uncertainty visible when information is missing.
 
-Forge explores a shorter game with a fixed opening, a five-point target, and a hand cap. Those choices are a design hypothesis about pace, not a claim that a specific game duration has been established by player testing.
+Forge is a shorter two-player game with player-chosen starting positions and a five-point target.
 
 ## Try each module
 
@@ -54,8 +54,6 @@ Forge explores a shorter game with a fixed opening, a five-point target, and a h
 | AI coach             | [Open the workspace](https://hexari.hirusha.space/tools), enter a visible position and request advice when a provider is configured. |
 | Board stats          | [Open the workspace](https://hexari.hirusha.space/tools) to inspect production, opening opportunities, and modelled strategy races.  |
 | Forge                | [Play Forge](https://forge.hirusha.space/) against the bot or another player.                                                        |
-
-The links open the interactive applications. Recorded demonstrations and module GIFs are not included here.
 
 ## How the applications work
 
@@ -72,16 +70,17 @@ Scores, balance searches, trade ranges, and strategy races are heuristics or sim
 
 ### Forge
 
-Forge is a two-player game on a fixed 37-tile board. Each player starts with a predetermined settlement and one of each resource. Roll, collect, trade, and build to reach **five victory points**.
+Forge is a two-player game on a fixed 19-tile board. Each player begins without resource cards and chooses a starting settlement and connected road without spending resources. Both pieces count against the player's available supply. Roll, collect, trade, and build to reach **five victory points**.
 
 - Play against a bot, share one device, or find an online opponent.
 - Build roads and settlements, or upgrade a settlement to a city. A successful build ends the turn.
+- Select a build card to highlight legal locations. The cards show the remaining pieces, and resource transfers are animated when builds and trades complete.
 - Trade with the other player or exchange four matching resources with the bank for one different resource.
-- Hold up to seven cards. On a roll of seven, each player with space receives one of their least-held resources. Each turn has a two-minute timer.
+- The robber begins hidden on the desert. On a roll of seven, nobody receives resources. Each player holding eight or more cards discards half, rounded down. The roller moves the robber to another tile and steals a random card from an adjacent opponent who has cards. The robber blocks production on its tile. Each turn has a two-minute timer.
 - Earn two points for the longest continuous road of at least five segments. An opponent's building interrupts a road; the current holder retains the award in a tie.
 - Use the in-game guide, coaching, sound and appearance settings, and game controls while playing.
 
-Online games add matchmaking, invitations, chat, reporting, reconnection, and optional accounts. Guests use generated nicknames; signed-in players use their account display names.
+Online games add matchmaking, invitations, chat, reporting, reconnection, and optional accounts. Guests use generated nicknames; signed-in players use their account display names. Online standings count completed online games and rank players by wins. The account also shows separate self-reported counts for completed bot and local games started while signed in; those counts do not affect online rankings.
 
 ### AI coach
 
@@ -177,7 +176,7 @@ hexari/
 |   |-- hexari/              Analyzer, workspace, and strategy engines
 |   |-- server/              Coach streaming, validation support, and Vite middleware
 |   +-- shared/              Board model, rendering, resources, and shared UI
-|-- supabase/forge.sql       Room and report tables and access controls
+|-- supabase/forge.sql       Room, report, and standings tables and access controls
 |-- tests/                   Unit, integration, and multiplayer tests
 |-- .github/workflows/       Verification and deployment workflows
 |-- .env.example             Environment variable template
@@ -264,7 +263,7 @@ Keep the Supabase secret key, moderator token, and provider keys out of source c
 ### Supabase setup
 
 1. Create a project in the [Supabase dashboard](https://supabase.com/dashboard). Copy its project URL, publishable key, and server secret key.
-2. Run [`supabase/forge.sql`](supabase/forge.sql) in the project's SQL editor. It creates the room and report tables, enables row-level security, and restricts table access to the service role.
+2. Run [`supabase/forge.sql`](supabase/forge.sql) in the project's SQL editor. It creates the room, report, and match-result tables, enables row-level security, and restricts direct table access to the service role. It also installs the completed-match trigger, signed-in standings function, and personal local-game count functions. Run the updated script again on an existing project to add these objects.
 3. In Supabase Auth, enable email confirmation. Set the site URL to `https://forge.hirusha.space/` and allow these redirect URLs:
 
    ```text
