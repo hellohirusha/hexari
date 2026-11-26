@@ -9,7 +9,9 @@ describe("Forge build availability", () => {
   it("requires a roll, resources and a legal road location", () => {
     const fresh = newGame(0);
     expect(buildOptions(fresh, "road").available).toBe(false);
-    const rolled = transition(fresh, { type: "roll", total: 7 });
+    const rolled = transition(fresh, { type: "roll", total: 6 });
+    rolled.players[0].hand.wood = 1;
+    rolled.players[0].hand.brick = 1;
     const roads = buildOptions(rolled, "road");
     expect(roads.available).toBe(true);
     expect(roads.edges.length).toBeGreaterThan(0);
@@ -20,7 +22,7 @@ describe("Forge build availability", () => {
     expect(buildOptions(rolled, "road").available).toBe(false);
   });
   it("finds settlement and city locations using the game rules", () => {
-    const game = transition(newGame(0), { type: "roll", total: 7 });
+    const game = transition(newGame(0), { type: "roll", total: 6 });
     game.players[0].hand = { wood: 3, brick: 1, wheat: 2, ore: 3, sheep: 1 };
     const start = game.players[0].settlements[0];
     const firstRoad = buildOptions(game, "road").edges[0];
@@ -30,7 +32,9 @@ describe("Forge build availability", () => {
     expect(buildKinds).toEqual(["road", "settlement", "city"]);
   });
   it("renders accessible cards with truthful availability", () => {
-    const game = transition(newGame(0), { type: "roll", total: 7 });
+    const game = transition(newGame(0), { type: "roll", total: 6 });
+    game.players[0].hand.wood = 1;
+    game.players[0].hand.brick = 1;
     const html = renderToStaticMarkup(
       <ForgeBuildCards
         game={game}
