@@ -18,27 +18,94 @@ export type Player = {
   farms?: number[];
 };
 export type Game = {
-  phase: "setup" | "roll" | "build" | "end";
+  phase: "setup" | "roll" | "discard" | "robber" | "build" | "end";
   turn: 0 | 1;
   players: [Player, Player];
   dice: number | null;
   winner: number | null;
   turnStarted: number;
   progressed?: boolean;
+  boardVersion?: number;
+  gameStartedAt?: number;
+  turnsPlayed?: number;
+  gameEndedAt?: number;
+  /** Stable identifier used to deduplicate personal local-game statistics. */
+  matchId?: string;
+  robberTile?: number;
+  discardRemaining?: [number, number];
   /** Previous award holder, persisted to resolve equal-length ties. */
   longestRoad?: 0 | 1 | null;
 };
 const starter = (corner: number): Player => ({
-  hand: { wood: 1, brick: 1, wheat: 1, ore: 1, sheep: 1 },
+  hand: { wood: 0, brick: 0, wheat: 0, ore: 0, sheep: 0 },
   settlements: [corner],
   cities: [],
   roads: [],
 });
+
+// Keep both players on equally productive, three-resource corners while
+// allowing the opening positions and player assignments to vary each game.
+const balancedStartingPairs: [number, number][] = (() => {
+  const corners = vertices.filter((vertex) => {
+    const tiles = vertex.tiles.map((id) => defaultBoard[id]);
+    return (
+      tiles.length === 3 &&
+      tiles.every((tile) => tile.resource !== "desert") &&
+      new Set(tiles.map((tile) => tile.resource)).size === 3 &&
+      tiles.reduce((sum, tile) => sum + (pips[tile.number ?? 0] ?? 0), 0) === 12
+    );
+  });
+  return corners.flatMap((first) =>
+    corners
+      .filter(
+        (second) =>
+          second.id > first.id && !first.neighbors.includes(second.id),
+      )
+      .map((second): [number, number] => [first.id, second.id]),
+  );
+})();
+
+export const boardVersion = 19;
+
 export function newGame(
   now = Date.now(),
-  options?: { manualSetup?: boolean },
+  options?: {
+    manualSetup?: boolean;
+    randomStart?: boolean;
+    random?: () => number;
+  },
 ): Game {
-  const players: [Player, Player] = [starter(23), starter(38)];
+  let matchId: string | undefined;
+  try {
+    matchId = globalThis.crypto?.randomUUID();
+  } catch {
+    // Game play does not depend on personal statistics or browser crypto.
+  }
+  let startingCorners: [number, number] = [23, 38];
+  if (
+    options?.randomStart &&
+    !options.manualSetup &&
+    balancedStartingPairs.length
+  ) {
+    const value = (options.random ?? Math.random)();
+    const choice = Math.min(
+      balancedStartingPairs.length * 2 - 1,
+      Math.max(
+        0,
+        Math.floor(
+          (Number.isFinite(value) ? value : 0) *
+            balancedStartingPairs.length *
+            2,
+        ),
+      ),
+    );
+    const [first, second] = balancedStartingPairs[Math.floor(choice / 2)];
+    startingCorners = choice % 2 === 0 ? [first, second] : [second, first];
+  }
+  const players: [Player, Player] = startingCorners.map(starter) as [
+    Player,
+    Player,
+  ];
   if (options?.manualSetup)
     for (const player of players) player.settlements = [];
   return {
@@ -48,10 +115,33 @@ export function newGame(
     dice: null,
     winner: null,
     turnStarted: now,
+    discardRemaining: [0, 0],
+    boardVersion,
+    gameStartedAt: now,
+    ...(matchId ? { matchId } : {}),
+    turnsPlayed: 0,
+    ...(options?.randomStart && !options.manualSetup
+      ? { progressed: false }
+      : {}),
     longestRoad: null,
   };
 }
 export type Building = "road" | "settlement" | "city";
+export const pieceLimits: Record<Building, number> = {
+  road: 15,
+  settlement: 5,
+  city: 4,
+};
+
+export function remainingPieces(player: Player, building: Building): number {
+  const used =
+    building === "road"
+      ? player.roads.length
+      : building === "settlement"
+        ? player.settlements.length
+        : player.cities.length;
+  return Math.max(0, pieceLimits[building] - used);
+}
 export const costs: Record<Building, Partial<Hand>> = {
   road: { wood: 1, brick: 1 },
   settlement: { wood: 1, brick: 1, wheat: 1, sheep: 1 },
@@ -106,7 +196,8 @@ export function canAfford(hand: Hand, cost: Partial<Hand>) {
 }
 export function legalSettlement(game: Game, id: number): boolean {
   const v = vertices[id];
-  if (!v) return false;
+  if (!v || remainingPieces(game.players[game.turn], "settlement") === 0)
+    return false;
   const occupied = game.players.flatMap((p) => [...p.settlements, ...p.cities]);
   return (
     !occupied.includes(id) &&
@@ -120,6 +211,7 @@ export function legalSetupSettlement(game: Game, id: number): boolean {
   if (
     game.phase !== "setup" ||
     !vertex ||
+    remainingPieces(game.players[game.turn], "settlement") === 0 ||
     game.players[game.turn].settlements.length
   )
     return false;
@@ -132,6 +224,21 @@ export function legalSetupSettlement(game: Game, id: number): boolean {
     !vertex.neighbors.some((neighbor) => occupied.includes(neighbor)) &&
     vertex.tiles.some((tile) => defaultBoard[tile].resource !== "desert")
   );
+}
+/** During setup, place one road beside the settlement just placed. */
+export function setupNeedsRoad(game: Game): boolean {
+  const player = game.players[game.turn];
+  return (
+    game.phase === "setup" &&
+    player.settlements.length === 1 &&
+    player.roads.length === 0
+  );
+}
+
+export function legalSetupRoad(game: Game, a: number, b: number): boolean {
+  if (!setupNeedsRoad(game)) return false;
+  const corner = game.players[game.turn].settlements[0];
+  return (a === corner || b === corner) && legalRoad(game, a, b);
 }
 /** A deterministic placement for the bot and turn timeout. */
 export function bestSetupSettlement(game: Game): number | undefined {
@@ -148,7 +255,7 @@ export function bestSetupSettlement(game: Game): number | undefined {
 }
 export function legalRoad(game: Game, a: number, b: number): boolean {
   if (
-    game.players[game.turn].roads.length >= 15 ||
+    remainingPieces(game.players[game.turn], "road") === 0 ||
     !vertices[a]?.neighbors.includes(b) ||
     game.players.some((p) =>
       p.roads.some(([x, y]) => (x === a && y === b) || (x === b && y === a)),
@@ -165,6 +272,8 @@ export function legalRoad(game: Game, a: number, b: number): boolean {
 }
 export type Action =
   | { type: "roll"; total: number }
+  | { type: "sevenDiscard"; seat: 0 | 1; resource: Goods }
+  | { type: "moveRobber"; tile: number; random?: number }
   | { type: "endTurn"; now: number }
   | { type: "discard"; resource: Goods }
   | {
@@ -180,6 +289,23 @@ export function transition(game: Game, action: Action): Game {
   const next: Game = structuredClone(game);
   if (next.phase === "end") return game;
   if (next.phase === "setup") {
+    if (setupNeedsRoad(next)) {
+      if (
+        action.type !== "build" ||
+        action.building !== "road" ||
+        action.to === undefined ||
+        !legalSetupRoad(next, action.at, action.to)
+      )
+        return game;
+      next.players[next.turn].roads.push([action.at, action.to]);
+      next.turnStarted = action.now ?? Date.now();
+      if (next.turn === 0) next.turn = 1;
+      else {
+        next.turn = 0;
+        next.phase = "roll";
+      }
+      return next;
+    }
     if (
       action.type !== "build" ||
       action.building !== "settlement" ||
@@ -190,11 +316,6 @@ export function transition(game: Game, action: Action): Game {
     next.players[next.turn].settlements.push(action.at);
     next.progressed = true;
     next.turnStarted = action.now ?? Date.now();
-    if (next.turn === 0) next.turn = 1;
-    else {
-      next.turn = 0;
-      next.phase = "roll";
-    }
     return next;
   }
   if (action.type === "roll") {
@@ -206,26 +327,20 @@ export function transition(game: Game, action: Action): Game {
     )
       return game;
     next.dice = action.total;
-    next.phase = "build";
     next.progressed = true;
-    // Seven has no robber in Forge. A small supply grant helps hands recover
-    // from resource starvation while respecting the same seven-card cap.
+    next.turnsPlayed = (next.turnsPlayed ?? 0) + 1;
     if (action.total === 7) {
-      next.players.forEach((player, seat) => {
-        if (
-          goods.reduce((sum, resource) => sum + player.hand[resource], 0) >= 7
-        )
-          return;
-        const offset = (next.turn + seat) % goods.length;
-        const preference = goods.map(
-          (_, index) => goods[(offset + index) % goods.length],
+      next.discardRemaining = next.players.map((player) => {
+        const total = goods.reduce(
+          (sum, resource) => sum + player.hand[resource],
+          0,
         );
-        const resource = preference.reduce((best, item) =>
-          player.hand[item] < player.hand[best] ? item : best,
-        );
-        player.hand[resource]++;
-      });
+        return total >= 8 ? Math.floor(total / 2) : 0;
+      }) as [number, number];
+      next.phase = next.discardRemaining.some(Boolean) ? "discard" : "robber";
+      return next;
     }
+    next.phase = "build";
     for (const player of next.players)
       for (const [corners, multiplier] of [
         [player.settlements, 1],
@@ -234,21 +349,83 @@ export function transition(game: Game, action: Action): Game {
         for (const id of corners)
           for (const tile of vertices[id].tiles) {
             const t = defaultBoard[tile];
-            if (t.number !== action.total || t.resource === "desert") continue;
-            const remaining = Math.max(
-              0,
-              7 - goods.reduce((n, g) => n + player.hand[g], 0),
-            );
-            player.hand[t.resource] += Math.min(multiplier, remaining);
+            if (
+              tile ===
+                (next.robberTile ??
+                  defaultBoard.findIndex(
+                    (item) => item.resource === "desert",
+                  )) ||
+              t.number !== action.total ||
+              t.resource === "desert"
+            )
+              continue;
+            player.hand[t.resource] += multiplier;
           }
     return next;
   }
+  if (action.type === "sevenDiscard") {
+    if (
+      next.phase !== "discard" ||
+      (action.seat !== 0 && action.seat !== 1) ||
+      !goods.includes(action.resource) ||
+      !next.discardRemaining?.[action.seat] ||
+      next.players[action.seat].hand[action.resource] < 1
+    )
+      return game;
+    next.players[action.seat].hand[action.resource]--;
+    next.discardRemaining[action.seat]--;
+    if (next.discardRemaining.every((count) => count === 0))
+      next.phase = "robber";
+    return next;
+  }
+  if (action.type === "moveRobber") {
+    const previous =
+      next.robberTile ??
+      defaultBoard.findIndex((tile) => tile.resource === "desert");
+    if (
+      next.phase !== "robber" ||
+      !Number.isInteger(action.tile) ||
+      action.tile < 0 ||
+      action.tile >= defaultBoard.length ||
+      action.tile === previous
+    )
+      return game;
+    next.robberTile = action.tile;
+    const victim = next.players[1 - next.turn];
+    const touches = [...victim.settlements, ...victim.cities].some((corner) =>
+      vertices[corner]?.tiles.includes(action.tile),
+    );
+    const total = goods.reduce(
+      (sum, resource) => sum + victim.hand[resource],
+      0,
+    );
+    if (touches && total > 0) {
+      const random = action.random ?? Math.random();
+      let index = Math.min(
+        total - 1,
+        Math.max(0, Math.floor((Number.isFinite(random) ? random : 0) * total)),
+      );
+      for (const resource of goods) {
+        if (index < victim.hand[resource]) {
+          victim.hand[resource]--;
+          next.players[next.turn].hand[resource]++;
+          break;
+        }
+        index -= victim.hand[resource];
+      }
+    }
+    next.phase = "build";
+    return next;
+  }
   if (action.type === "endTurn") {
+    if (next.phase !== "roll" && next.phase !== "build") return game;
     next.progressed = true;
+    if (next.phase === "roll") next.turnsPlayed = (next.turnsPlayed ?? 0) + 1;
     next.turn = next.turn === 0 ? 1 : 0;
     if (totalPoints(next, next.turn) >= 5) {
       next.phase = "end";
       next.winner = next.turn;
+      next.gameEndedAt = action.now;
       return next;
     }
     next.phase = "roll";
@@ -289,6 +466,7 @@ export function transition(game: Game, action: Action): Game {
   }
   if (
     !costs[action.building] ||
+    remainingPieces(player, action.building) === 0 ||
     !canAfford(player.hand, costs[action.building])
   )
     return game;
@@ -309,6 +487,7 @@ export function transition(game: Game, action: Action): Game {
   if (totalPoints(next, next.turn) >= 5) {
     next.phase = "end";
     next.winner = next.turn;
+    next.gameEndedAt = action.now ?? Date.now();
     return next;
   }
   return transition(next, { type: "endTurn", now: action.now ?? Date.now() });
